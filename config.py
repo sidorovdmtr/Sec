@@ -8,10 +8,10 @@ import os
 # ID Google Таблицы (из адресной строки: .../d/<ЭТОТ_ID>/edit)
 # Задаётся через переменную окружения / GitHub Secret SPREADSHEET_ID,
 # но можно оставить и прямое значение по умолчанию для локального запуска.
-SPREADSHEET_ID = os.environ.get(
-    "SPREADSHEET_ID",
-    "1BcyOKDZOnIAdYjR0T80jNPiTZqlgNcAs4mAJjAarCCQ",
-)
+# Важно: используем "or", а не только .get(..., default) — если секрет
+# в GitHub объявлен, но не заполнен, переменная окружения придёт пустой
+# строкой (а не отсутствующей), и .get() в этом случае default не применит.
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID") or "1BcyOKDZOnIAdYjR0T80jNPiTZqlgNcAs4mAJjAarCCQ"
 
 # Названия листов в таблице
 SHEET_SETTINGS = "Настройки"
