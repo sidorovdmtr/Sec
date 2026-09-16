@@ -68,9 +68,10 @@ def _make_session() -> requests.Session:
     # Шаг 2: пробуем явно выставить город через вероятные cookie-имена.
     # Это "на всякий случай" — не факт, что сработает без реального запроса
     # к API смены города, см. оговорку в шапке файла.
+    # Важно: значения cookie должны быть ASCII (латиница/цифры) — HTTP-заголовки
+    # не допускают кириллицу напрямую, поэтому пробуем только англоязычный слаг.
     for name in CITY_COOKIE_CANDIDATES:
         session.cookies.set(name, TBM_CITY_CODE_KRASNODAR, domain="www.tbm.ru")
-        session.cookies.set(name, config.TBM_CITY_NAME, domain="www.tbm.ru")
 
     return session
 
@@ -144,9 +145,11 @@ def _parse_html_fallback(soup: BeautifulSoup) -> list:
 def scrape_category(session: requests.Session, url: str) -> list:
     try:
         resp = session.get(url, timeout=20)
-    except requests.RequestException:
+    except Exception as exc:  # шире, чем requests.RequestException — не роняем весь прогон
+        print(f"    не удалось загрузить {url}: {exc}")
         return []
     if resp.status_code != 200:
+        print(f"    {url} -> статус {resp.status_code}")
         return []
 
     html = resp.text
@@ -165,6 +168,7 @@ def scrape_all() -> list:
     all_products = []
     for url in CATEGORY_URLS:
         items = scrape_category(session, url)
+        print(f"    {url} -> найдено: {len(items)}")
         all_products.extend(items)
         time.sleep(config.REQUEST_DELAY_SECONDS)
     return all_products
