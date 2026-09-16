@@ -69,7 +69,7 @@ def detect_line(title: str) -> str:
     return "ПО УМОЛЧАНИЮ"
 
 
-_PRICE_RE = re.compile(r"\d[\d\s\xa0]*(?:[.,]\d{1,2})?")
+_PRICE_RE = re.compile(r"\d[\d \xa0]*(?:[.,]\d{1,2})?")
 
 
 def _parse_price(text: str):

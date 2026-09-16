@@ -1,55 +1,58 @@
 # -*- coding: utf-8 -*-
 """
-Парсер розничных цен tbm.ru, город Краснодар.
+Парсер розничных цен tbm.ru — раздел "Мебельные комплектующие"
+(https://www.tbm.ru/komplektuyuschie-dlya-mebeli).
 
-ВАЖНЫЕ ОГОВОРКИ (прочитайте перед первым запуском):
+ВЕРСИЯ 2 — переписан после первого реального прогона.
 
-1. tbm.ru явно запрещает автоматический доступ в robots.txt. Мы сознательно
-   идём против этого правила по вашему запросу — скрипт представляется
-   обычным браузером (User-Agent) и делает паузы между запросами, чтобы
-   не создавать нагрузку. Полной гарантии, что сайт не заблокирует IP
-   GitHub Actions, нет.
+Что изменилось и почему:
+1. Первая версия пыталась читать встроенный JSON (__NUXT_DATA__) — но у Nuxt 3
+   это не обычный JSON с настоящими значениями, а компактный формат, где вместо
+   значений часто стоят числа-ссылки на другие элементы массива. Из-за этого
+   в таблицу попадали бессмысленные числа вместо названий/цен.
+   Теперь вместо JSON разбирается ВИДИМЫЙ текст страницы — по меткам "Арт." и
+   "Торговая марка", которые на сайте tbm.ru (и на старой, и на новой версии)
+   стоят стабильно рядом с каждым товаром.
+2. Категория "мебельные комплектующие" — это дерево вложенных подкатегорий
+   (опоры, петли, ручки и т.д.), а не единый список товаров. Поэтому скрипт
+   сначала обходит страницы внутри этого раздела (не уходя за его пределы),
+   собирает все ссылки на карточки товаров (/product/...), затем разбирает
+   каждую найденную страницу на товары по тексту.
 
-2. Как переключить сайт на город Краснодар — НЕ проверено вживую (в среде,
-   где писался этот код, нет доступа в интернет). Ниже — рабочая гипотеза:
-   сайт на Nuxt, город обычно хранится в cookie. Функция `_make_session`
-   пытается сначала найти endpoint смены города и, если не получилось,
-   просто выставляет вероятные имена cookie напрямую.
-   Если после первого прогона в логах будут видны московские цены или
-   пустой результат — нужно будет открыть sайт в браузере, в Network
-   посмотреть, какой запрос/cookie реально отвечает за город, и прислать
-   мне — поправлю за одну правку.
-
-3. Структура карточки товара на сайте современная (Nuxt/Vue), поэтому вместо
-   хрупкого парсинга CSS-классов скрипт в первую очередь пробует найти
-   встроенный JSON с данными страницы (обычно это тег
-   <script id="__NUXT_DATA__"> или переменная window.__NUXT__) — это гораздо
-   надёжнее статичных классов. Если такого блока нет, используется резервный
-   разбор по видимым признакам цены в HTML.
+ВАЖНАЯ ОГОВОРКА: обход "вширь" (сколько подкатегорий и страниц реально есть,
+как устроена пагинация) — тоже не проверен вживую, ограничен разумными
+запасами (MAX_PAGES_TO_VISIT) на случай неожиданно большого раздела. Если
+после прогона окажется, что собралась лишь часть ассортимента — пришлите
+лог (там печатается, сколько страниц раздела обошли и сколько товаров нашли),
+поправим лимиты или пагинацию.
 """
 
-import json
 import re
 import time
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 from bs4 import BeautifulSoup
 
 import config
-from match_utils import extract_decor_code, extract_thickness, build_key
+from match_utils import build_key
 
 BASE_URL = "https://www.tbm.ru"
+ROOT_CATEGORY_URL = f"{BASE_URL}/komplektuyuschie-dlya-mebeli"
 
-# Категории мебельных комплектующих, которые собираем.
-# Список можно расширять — добавляйте ссылки на страницы категорий.
-CATEGORY_URLS = [
-    f"{BASE_URL}/komplektuyuschie-dlya-mebeli/opory-mebelnye",
-    f"{BASE_URL}/komplektuyuschie-dlya-mebeli",
-]
+# Предохранители от неожиданно большого раздела / бесконечного обхода.
+# "Мебельные комплектующие" — большой раздел, поэтому лимит страниц ощутимо
+# выше, чем можно было бы ожидать; при 400 позициях в час (полторы секунды
+# задержки на запрос) полный обход тысяч карточек уложится в несколько часов,
+# что нормально для раз-в-сутки задачи. Если после прогона окажется мало —
+# увеличим.
+MAX_PAGES_TO_VISIT = 3000
+MAX_PAGINATION_PER_PAGE = 25  # сколько страниц пагинации пробуем на одну категорию
 
-# Вероятные имена cookie для выбора города — пробуем по очереди
-CITY_COOKIE_CANDIDATES = ["city", "selected_city", "tbm_city", "region"]
-TBM_CITY_CODE_KRASNODAR = "krasnodar"  # предположительно; см. оговорку №2 выше
+# Метки, по которым режем текст на карточки товара
+ARTICLE_LABEL_RE = re.compile(r"Арт\.\s*([A-Za-zА-Яа-я0-9._/\-]+)")
+PRICE_RE = re.compile(r"(\d[\d \xa0]*(?:[.,]\d{1,2})?)\s*(?:₽|руб)")
+BRAND_LABEL_RE = re.compile(r"Торговая марка\s*\n?\s*([^\n]+)")
 
 
 def _make_session() -> requests.Session:
@@ -58,120 +61,164 @@ def _make_session() -> requests.Session:
         "User-Agent": config.USER_AGENT,
         "Accept-Language": "ru-RU,ru;q=0.9",
     })
-
-    # Шаг 1: заходим на главную, чтобы получить базовые cookie сессии
     try:
         session.get(BASE_URL, timeout=20)
     except requests.RequestException:
         pass
-
-    # Шаг 2: пробуем явно выставить город через вероятные cookie-имена.
-    # Это "на всякий случай" — не факт, что сработает без реального запроса
-    # к API смены города, см. оговорку в шапке файла.
-    # Важно: значения cookie должны быть ASCII (латиница/цифры) — HTTP-заголовки
-    # не допускают кириллицу напрямую, поэтому пробуем только англоязычный слаг.
-    for name in CITY_COOKIE_CANDIDATES:
-        session.cookies.set(name, TBM_CITY_CODE_KRASNODAR, domain="www.tbm.ru")
-
     return session
 
 
-def _parse_price(text: str):
-    if not text:
-        return None
-    match = re.search(r"\d[\d\s\xa0]*(?:[.,]\d{1,2})?", text)
-    if not match:
-        return None
-    raw = match.group(0).replace("\xa0", "").replace(" ", "").replace(",", ".")
+def _normalize_url(url: str) -> str:
+    """Убирает якоря/лишние query-параметры отслеживания, приводит к единому виду."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+
+
+def _fetch(session: requests.Session, url: str):
     try:
-        return float(raw)
+        resp = session.get(url, timeout=20)
+    except Exception as exc:
+        print(f"    не удалось загрузить {url}: {exc}")
+        return None
+    if resp.status_code != 200:
+        print(f"    {url} -> статус {resp.status_code}")
+        return None
+    return resp.text
+
+
+def _parse_price(raw: str):
+    if not raw:
+        return None
+    cleaned = raw.replace("\xa0", "").replace(" ", "").replace(",", ".")
+    try:
+        return float(cleaned)
     except ValueError:
         return None
 
 
-def _extract_nuxt_json(html: str):
-    """Пытается найти встроенный JSON с данными страницы (Nuxt)."""
-    patterns = [
-        r'<script[^>]*id="__NUXT_DATA__"[^>]*>(.*?)</script>',
-        r"window\.__NUXT__\s*=\s*(\{.*?\});?\s*</script>",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, html, re.DOTALL)
-        if not match:
-            continue
-        try:
-            return json.loads(match.group(1))
-        except (json.JSONDecodeError, ValueError):
-            continue
-    return None
-
-
-def _walk_json_for_products(node, found: list):
-    """Рекурсивно ищет в JSON объекты, похожие на карточку товара
-    (есть название и цена)."""
-    if isinstance(node, dict):
-        title = node.get("name") or node.get("title")
-        price = node.get("price") or node.get("retailPrice") or node.get("priceRetail")
-        article = node.get("article") or node.get("sku") or node.get("code")
-        if title and price:
-            found.append({"title": title, "price": price, "article": article,
-                           "url": node.get("url") or node.get("slug") or ""})
-        for value in node.values():
-            _walk_json_for_products(value, found)
-    elif isinstance(node, list):
-        for item in node:
-            _walk_json_for_products(item, found)
-
-
-def _parse_html_fallback(soup: BeautifulSoup) -> list:
-    """Резервный разбор, если не нашли JSON: ищем карточки по видимым признакам."""
-    found = []
-    # Ищем блоки, где рядом есть текст с "руб" / "₽" и что-то похожее на артикул
-    for card in soup.select("[class*='product'], [class*='card']"):
-        text = card.get_text(" ", strip=True)
-        price_match = re.search(r"[\d\s]{3,}[.,]\d{2}\s*₽", text)
-        if not price_match:
-            continue
-        title_el = card.find(["h2", "h3", "a"])
-        title = title_el.get_text(strip=True) if title_el else text[:80]
-        price = _parse_price(price_match.group(0))
-        link_el = card.find("a", href=True)
-        url = link_el["href"] if link_el else ""
-        if price:
-            found.append({"title": title, "price": price, "article": "", "url": url})
-    return found
-
-
-def scrape_category(session: requests.Session, url: str) -> list:
-    try:
-        resp = session.get(url, timeout=20)
-    except Exception as exc:  # шире, чем requests.RequestException — не роняем весь прогон
-        print(f"    не удалось загрузить {url}: {exc}")
-        return []
-    if resp.status_code != 200:
-        print(f"    {url} -> статус {resp.status_code}")
-        return []
-
-    html = resp.text
-    nuxt_data = _extract_nuxt_json(html)
+def extract_products_from_text(text: str) -> list:
+    """
+    Режет текст страницы на куски по меткам "Арт. XXX" и вытаскивает
+    из каждого куска название (текст перед меткой), цену и бренд (если есть).
+    """
     products = []
-    if nuxt_data is not None:
-        _walk_json_for_products(nuxt_data, products)
-    if not products:
-        soup = BeautifulSoup(html, "html.parser")
-        products = _parse_html_fallback(soup)
+    matches = list(ARTICLE_LABEL_RE.finditer(text))
+    for idx, match in enumerate(matches):
+        article = match.group(1).strip()
+        start = match.start()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else min(len(text), match.end() + 400)
+        chunk = text[start:end]
+
+        # название — берём кусок текста непосредственно ПЕРЕД меткой "Арт."
+        before_start = matches[idx - 1].end() if idx > 0 else max(0, start - 200)
+        title_zone = text[before_start:start].strip()
+        # заголовок обычно последняя "строка" в этой зоне
+        title = title_zone.split("\n")[-1].strip(" ·-—")
+        if not title:
+            title = title_zone.strip(" ·-—")[-150:]
+
+        price_match = PRICE_RE.search(chunk)
+        price = _parse_price(price_match.group(1)) if price_match else None
+
+        brand_match = BRAND_LABEL_RE.search(chunk)
+        brand = brand_match.group(1).strip() if brand_match else ""
+
+        if not title or price is None:
+            continue  # без названия или без цены позиция бесполезна для прайса
+
+        products.append({
+            "title": title,
+            "article": article,
+            "price": price,
+            "brand": brand,
+        })
     return products
+
+
+def _extract_links(html: str, page_url: str):
+    soup = BeautifulSoup(html, "html.parser")
+    product_links = set()
+    category_links = set()
+    for a in soup.find_all("a", href=True):
+        full = _normalize_url(urljoin(page_url, a["href"]))
+        if not full.startswith(BASE_URL):
+            continue
+        if "/product/" in full:
+            product_links.add(full)
+        elif full.startswith(ROOT_CATEGORY_URL) and full != page_url:
+            category_links.add(full)
+    return product_links, category_links
+
+
+def crawl_category_tree(session: requests.Session):
+    """
+    Обходит раздел "Мебельные комплектующие" вширь: собирает ссылки на
+    карточки товаров и заодно разбирает товары прямо со страниц листинга
+    (если цена видна в списке — не тратим лишний запрос на карточку).
+    """
+    to_visit = [ROOT_CATEGORY_URL]
+    visited = set()
+    all_products = {}  # article -> dict, чтобы не дублировать
+
+    while to_visit and len(visited) < MAX_PAGES_TO_VISIT:
+        url = to_visit.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+
+        html = _fetch(session, url)
+        if html is None:
+            continue
+
+        text = BeautifulSoup(html, "html.parser").get_text("\n", strip=True)
+        found = extract_products_from_text(text)
+        for p in found:
+            all_products[p["article"]] = p
+
+        product_links, category_links = _extract_links(html, url)
+        for link in product_links | category_links:
+            if link not in visited and link not in to_visit:
+                to_visit.append(link)
+
+        # пробуем пагинацию для этой же страницы (?page=2, 3, ...),
+        # останавливаемся, как только новая страница не добавляет новых товаров
+        # пагинацию имеет смысл пробовать только для страниц-категорий
+        # (у карточки товара пагинации нет — не тратим на неё лишние запросы)
+        if "/product/" in url:
+            time.sleep(config.REQUEST_DELAY_SECONDS)
+            continue
+
+        base_no_query = url.split("?")[0]
+        seen_before = set(all_products.keys())
+        for page_num in range(2, MAX_PAGINATION_PER_PAGE + 1):
+            if len(visited) >= MAX_PAGES_TO_VISIT:
+                break
+            page_url = f"{base_no_query}?page={page_num}"
+            if page_url in visited:
+                continue
+            visited.add(page_url)
+            page_html = _fetch(session, page_url)
+            if page_html is None:
+                break
+            page_text = BeautifulSoup(page_html, "html.parser").get_text("\n", strip=True)
+            page_found = extract_products_from_text(page_text)
+            new_articles = {p["article"] for p in page_found} - seen_before
+            if not new_articles:
+                break  # дальше пагинации, видимо, нет (или параметр не поддерживается)
+            for p in page_found:
+                all_products[p["article"]] = p
+            seen_before |= new_articles
+            time.sleep(config.REQUEST_DELAY_SECONDS)
+
+        time.sleep(config.REQUEST_DELAY_SECONDS)
+
+    print(f"    обошли страниц: {len(visited)}, категорий в очереди осталось: {len(to_visit)}")
+    return list(all_products.values())
 
 
 def scrape_all() -> list:
     session = _make_session()
-    all_products = []
-    for url in CATEGORY_URLS:
-        items = scrape_category(session, url)
-        print(f"    {url} -> найдено: {len(items)}")
-        all_products.extend(items)
-        time.sleep(config.REQUEST_DELAY_SECONDS)
-    return all_products
+    return crawl_category_tree(session)
 
 
 def products_to_rows(products: list, coefficients_resolver) -> list:
@@ -180,32 +227,27 @@ def products_to_rows(products: list, coefficients_resolver) -> list:
     rows = []
     seen_keys = set()
     for item in products:
-        title = str(item.get("title") or "")
-        price = item.get("price")
-        try:
-            price = float(price)
-        except (TypeError, ValueError):
-            continue
+        title = item["title"]
+        price = item["price"]
+        article = item["article"]
+        brand = item.get("brand", "")
 
-        decor_code = str(item.get("article") or "") or extract_decor_code(title)
-        thickness = extract_thickness(title)
-        manufacturer = "ТБМ"
-        key = build_key(manufacturer, decor_code, thickness or "-")
+        key = build_key(brand or "ТБМ", article, "-")
         if key in seen_keys:
             continue
         seen_keys.add(key)
 
         our_price = coefficients_resolver("ТБМ", "ПО УМОЛЧАНИЮ", price)
         rows.append([
-            manufacturer,
+            brand,
             "ПО УМОЛЧАНИЮ",
-            decor_code,
-            thickness,
+            article,
+            "",
             title,
             price,
             our_price if our_price is not None else "",
             key,
-            item.get("url") or "",
+            "",
             "есть на сайте",
             now_str(),
         ])
