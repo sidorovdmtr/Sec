@@ -878,6 +878,9 @@
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
     document.addEventListener('pointerdown', function (e) { if (e.target.closest && e.target.closest('.sug')) e.preventDefault(); });
+    // iOS Safari игнорирует user-scalable=no, поэтому щипок и двойное касание гасим отдельно
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (ev) { document.addEventListener(ev, function (e) { e.preventDefault(); }); });
+    document.addEventListener('touchmove', function (e) { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
     window.addEventListener('online', function () { S.online = true; render(); scheduleSync(); });
     window.addEventListener('offline', function () { S.online = false; render(); });
     if (CFG.firebase) { setSync('connecting', 'Облако: подключение…'); remoteInit(); } else setSync('local', '');

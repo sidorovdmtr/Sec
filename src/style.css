@@ -95,3 +95,7 @@ table.tb{width:100%;border-collapse:collapse;font-size:14px}table.tb th{font-siz
 .cb.on{background:linear-gradient(135deg,var(--acc1),var(--acc2));border-color:transparent}
 .seg button:disabled{opacity:.45}
 .wsel .chip:disabled{opacity:.5}
+
+/* масштаб экрана заблокирован: без двойного касания и без увеличения при вводе */
+html{touch-action:manipulation;-webkit-text-size-adjust:100%}
+@media (pointer:coarse){input,select,textarea{font-size:16px}}

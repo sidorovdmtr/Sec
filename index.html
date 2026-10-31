@@ -2,7 +2,7 @@
 <html lang="ru" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Деньги">
@@ -110,6 +110,10 @@ table.tb{width:100%;border-collapse:collapse;font-size:14px}table.tb th{font-siz
 .cb.on{background:linear-gradient(135deg,var(--acc1),var(--acc2));border-color:transparent}
 .seg button:disabled{opacity:.45}
 .wsel .chip:disabled{opacity:.5}
+
+/* масштаб экрана заблокирован: без двойного касания и без увеличения при вводе */
+html{touch-action:manipulation;-webkit-text-size-adjust:100%}
+@media (pointer:coarse){input,select,textarea{font-size:16px}}
 
 </style>
 </head>
@@ -1663,6 +1667,9 @@ table.tb{width:100%;border-collapse:collapse;font-size:14px}table.tb th{font-siz
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
     document.addEventListener('pointerdown', function (e) { if (e.target.closest && e.target.closest('.sug')) e.preventDefault(); });
+    // iOS Safari игнорирует user-scalable=no, поэтому щипок и двойное касание гасим отдельно
+    ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (ev) { document.addEventListener(ev, function (e) { e.preventDefault(); }); });
+    document.addEventListener('touchmove', function (e) { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
     window.addEventListener('online', function () { S.online = true; render(); scheduleSync(); });
     window.addEventListener('offline', function () { S.online = false; render(); });
     if (CFG.firebase) { setSync('connecting', 'Облако: подключение…'); remoteInit(); } else setSync('local', '');
