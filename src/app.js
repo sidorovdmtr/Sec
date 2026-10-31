@@ -75,7 +75,13 @@
   function remoteSignIn() {
     if (!Remote.authMod) return;
     var p = new Remote.authMod.GoogleAuthProvider();
-    Remote.authMod.signInWithRedirect(Remote.auth, p);
+    // всплывающее окно: вход через редирект на GitHub Pages не завершается, потому что браузеры изолируют хранилище между доменами
+    Remote.authMod.signInWithPopup(Remote.auth, p).catch(function (e) {
+      var c = e && e.code || '';
+      if (c === 'auth/popup-blocked') return Remote.authMod.signInWithRedirect(Remote.auth, p);
+      if (c === 'auth/popup-closed-by-user' || c === 'auth/cancelled-popup-request') return;
+      toast('Вход не удался: ' + (c || 'неизвестная ошибка'));
+    });
   }
   function col(name) { return Remote.fs.collection(Remote.db, 'money_' + S.mode + '_' + name); }
   // в облаке три документа настроек: state (справочник, статусы проектов), decisions (решения по выпискам, игнорируемые строки, история загрузок), log (журнал изменений)

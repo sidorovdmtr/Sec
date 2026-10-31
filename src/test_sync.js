@@ -16,7 +16,7 @@ function fsCall(op, a) {
 }
 const FAKE = {
   app: `export function initializeApp(c){return {c}}`,
-  auth: `export class GoogleAuthProvider{}; export function getAuth(){return {}}; export function onAuthStateChanged(a,cb){setTimeout(()=>cb({email:'t@example.com'}),0)}; export function signInWithRedirect(){}`,
+  auth: `export class GoogleAuthProvider{}; export function getAuth(){return {}}; export function onAuthStateChanged(a,cb){setTimeout(()=>cb({email:'t@example.com'}),0)}; export function signInWithRedirect(){}; export function signInWithPopup(){return Promise.resolve({})}`,
   fs: `const call=(o,a)=>window.__fsCall(o,a);
 export function getFirestore(){return {}}
 export function collection(db,name){return {path:name}}
