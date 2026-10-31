@@ -28,12 +28,17 @@
     S.decisions = jparse(lsGet(pref() + 'decisions'), []);
     var meta = jparse(lsGet(pref() + 'meta'), {});
     S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', projects: meta.projects || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
-    if (ensureCatalogNow(true)) persist();
+    ensureCatalogNow(true); persist();
   }
   // добавляет в справочник недостающие статьи (системные и встреченные в записях); возвращает число добавленных несистемных
   function ensureCatalogNow(silent) {
     var added = KC.ensureCatalog(S.meta.articles, S.records);
-    if (added.length) { S.meta.articles = S.meta.articles.concat(added); if (!silent) persist(); }
+    // статьи без вида деятельности получают вид из утверждённого списка (Дмитрий, 31.10.2026); уже выбранные виды не трогаем
+    var upgraded = 0;
+    S.meta.articles.forEach(function (a) { if (a.activity === 'none' && !a.system && KC.defaultActivity(a.name) !== 'none') { a.activity = KC.defaultActivity(a.name); a.updatedAt = KC.nowISO(); upgraded++; } });
+    if (upgraded) S.log.push({ id: KC.uid(), at: KC.nowISO(), action: 'catalog', summary: 'Статьям без вида деятельности проставлен вид из утверждённого списка: ' + upgraded, recId: '' });
+    if (added.length) S.meta.articles = S.meta.articles.concat(added);
+    if ((added.length || upgraded) && !silent) persist();
     return added.filter(function (x) { return !x.system; }).length;
   }
   function persist(noSync) {
