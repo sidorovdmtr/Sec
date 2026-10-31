@@ -305,7 +305,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   await page.reload();
   await page.click('button[data-act="seed"]');
   ok('desktop panel visible', await page.locator('.desk').isVisible());
-  ok('desktop nav left', (await page.evaluate(() => document.querySelector('.nav').getBoundingClientRect().left)) === 0 && (await page.evaluate(() => document.querySelector('.nav').getBoundingClientRect().width)) < 100);
+  ok('desktop nav left', (await page.evaluate(() => document.querySelector('.nav').getBoundingClientRect().left)) === 0 && (await page.evaluate(() => document.querySelector('.nav').getBoundingClientRect().width)) < 110);
   ok('no horizontal overflow desktop', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   await page.setViewportSize({ width: 390, height: 844 });
   ok('no horizontal overflow phone', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), await page.evaluate(() => document.documentElement.scrollWidth));

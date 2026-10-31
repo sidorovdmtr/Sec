@@ -146,7 +146,7 @@
   /* ---------- вспомогательное ---------- */
   var ICON = {
     left: '<path d="M15 18l-6-6 6-6"/>', right: '<path d="M9 18l6-6-6-6"/>', up: '<path d="M6 15l6-6 6 6"/>', down: '<path d="M6 9l6 6 6-6"/>',
-    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>', plus: '<path d="M12 5v14M5 12h14"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>', plus: '<path d="M12 5v14M5 12h14"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>', trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
     moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     ops: '<path d="M4 6h16M4 12h16M4 18h10"/>', proj: '<path d="M3 7h6l2 2h10v10H3z"/>', stm: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>', cfg: '<path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2M21 3v6h-6"/>',
@@ -431,7 +431,7 @@
     if (!f) { host.remove(); return; }
     var title = (f.editId ? 'Операция' : 'Новая операция'), isTr = f.type === 'transfer', lock = f.locked ? ' disabled' : '';
     var ro = isTr && f.editId;
-    var h = '<div class="sheet"><div class="inner"><div class="row between"><button type="button" class="iconbtn" data-act="closeform" aria-label="Закрыть">' + svg('close', 22) + '</button><div class="bold" style="font-size:17px">' + title + '</div><button type="button" class="btn" style="border:0;color:var(--acclink);font-weight:600" data-act="saveform"' + (ro ? ' hidden' : '') + '>Сохранить</button></div>';
+    var h = '<div class="sheet"><div class="inner"><div class="row between"><button type="button" class="iconbtn" data-act="closeform" aria-label="Закрыть">' + svg('close', 22) + '</button><div class="bold" style="font-size:17px">' + title + '</div>' + (f.editId ? '<button type="button" class="iconbtn" style="color:var(--neg)" data-act="deleterec" aria-label="' + (ro ? 'Удалить перевод (обе записи)' : 'Удалить операцию') + '">' + svg('trash', 22) + '</button>' : '<span style="width:44px"></span>') + '</div>';
     if (!S.online) h += '<div class="banner warn">Нет связи: запись сохранится в телефоне и отправится позже</div>';
     if (!f.editId) h += '<div class="seg glass"><button type="button" class="' + (f.type === 'income' ? 'on' : '') + '" data-act="ftype" data-v="income">Приход</button><button type="button" class="' + (f.type === 'expense' ? 'on' : '') + '" data-act="ftype" data-v="expense">Расход</button><button type="button" class="' + (f.type === 'transfer' ? 'on' : '') + '" data-act="ftype" data-v="transfer">Перевод</button></div>';
     h += '<div class="glass" style="overflow:hidden">';
@@ -455,8 +455,8 @@
     h += '</div>';
     if (f.locked) h += '<div class="tiny mu">Запись из выписки: сумму, счёт и дату менять нельзя.</div>';
     h += '<div class="errs" id="errs">' + esc(f.errors.join('. ')) + '</div>';
-    if (f.editId) h += '<button type="button" class="btn danger wide" data-act="deleterec">' + (ro ? 'Удалить перевод (обе записи)' : 'Удалить операцию') + '</button>';
-    else h += '<div class="tiny mu">Кнопка «Далее» в поле «Описание» сохраняет запись и закрывает окно: дата по умолчанию сегодня, план выключен. Сохранить можно и с одной суммой и кошельком, незаполненное попадёт в счётчик «не заполнено».</div>';
+    if (!ro) h += '<button type="button" class="btn main wide" data-act="saveform">Сохранить</button>';
+    if (!f.editId) h += '<div class="tiny mu">Кнопка «Далее» в поле «Описание» сохраняет запись и закрывает окно: дата по умолчанию сегодня, план выключен. Сохранить можно и с одной суммой и кошельком, незаполненное попадёт в счётчик «не заполнено».</div>';
     h += '</div></div>';
     host.innerHTML = h;
     if (!f.editId) { var a = $('#f-amount', host); if (a) a.focus(); }
