@@ -1,0 +1,12 @@
+node_modules/
+src/dist/
+src/*.png
+.DS_Store
+# данные не коммитим никогда: выписки, сводная таблица, копии из инструмента
+*.xlsx
+*.xls
+*.csv
+kubcrafter-dengi-test-*.json
+kubcrafter-dengi-prod-*.json
+kubcrafter-dengi-test-*.xlsx
+kubcrafter-dengi-prod-*.xlsx

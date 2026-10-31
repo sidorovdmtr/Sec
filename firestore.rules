@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // по умолчанию всё закрыто
+    match /{document=**} { allow read, write: if false; }
+
+    // полный доступ у адресов из списка. Доступ к настройкам даёт полные права, отдельных ролей нет.
+    // Чтобы добавить человека, допишите его адрес Google в список (адреса через запятую).
+    function allowed() {
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['ЗАМЕНИТЕ@gmail.com'];
+    }
+
+    match /money_test_records/{id} { allow read, write: if allowed(); }
+    match /money_test_meta/{id}    { allow read, write: if allowed(); }
+    match /money_prod_records/{id} { allow read, write: if allowed(); }
+    match /money_prod_meta/{id}    { allow read, write: if allowed(); }
+  }
+}
