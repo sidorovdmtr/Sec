@@ -184,6 +184,16 @@ function alfaScenario() {
   const again = KC.importSummary(objs, res.records);
   eq('import twice no dups', again.records.length, 0);
 }
+// колонка «Альфа-банк (₽)» и виды деятельности по умолчанию
+{
+  const objs = [{ 'ID': 'a1', 'Дата операции': '2026-10-01', 'Альфа-банк (₽)': -1000, 'Кредит личных средств Сидорова Д.В.': '', 'Статья': 'Закупка материала' },
+    { 'ID': 'a2', 'Дата операции': '2026-10-02', 'Альфа-банк (₽)': 500, 'Статья': 'Получение кредитов и займов' },
+    { 'ID': 'a3', 'Дата операции': '2026-10-03', 'Альфа-банк (₽)': 7, 'Статья': 'Выдуманная статья' }];
+  const res = KC.importSummary(objs, []);
+  eq('alfa with currency suffix', [res.records.length, res.skipped, res.records[0].wallet], [3, 0, 'alfa']);
+  const cat = KC.ensureCatalog([], res.records).filter(a => !a.system);
+  eq('default activities', cat.map(a => a.activity), ['operating', 'financing', 'none']);
+}
 // ---- копии ----
 {
   const samples = KC.sampleRecords('2026-11-12');

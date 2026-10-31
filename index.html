@@ -368,6 +368,18 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   ];
   function activityName(id) { for (var i = 0; i < ACTIVITIES.length; i++) if (ACTIVITIES[i].id === id) return ACTIVITIES[i].name; return ACTIVITIES[3].name; }
   function validActivity(id) { for (var i = 0; i < ACTIVITIES.length; i++) if (ACTIVITIES[i].id === id) return id; return 'none'; }
+  // виды деятельности по статьям из файла «Статьи и виды деятельности» (утверждено 31.10.2026); применяются только к новым статьям
+  var DEFAULT_ACTIVITY = {
+    'административные подрядчики': 'operating', 'аренда офиса': 'operating', 'возвраты от поставщиков': 'operating', 'закупка материала': 'operating',
+    'зарплата административного персонала': 'operating', 'зарплата коммерческого персонала': 'operating', 'зарплата производственного персонала': 'operating',
+    'маркетинговые подрядчики': 'operating', 'налоги': 'operating', 'нераспределенные расходы': 'operating', 'нераспределённые расходы': 'operating', 'обучение персонала': 'operating',
+    'оплата рекламных систем': 'operating', 'поиск и найм персонала': 'operating', 'представительские расходы': 'operating', 'продажа мебель без ндс': 'operating',
+    'продажа мебель с ндс': 'operating', 'продажи маркетплейс': 'operating', 'продажи мебель': 'operating', 'рко': 'operating', 'расходы на персонал': 'operating',
+    'содержание офиса': 'operating', 'содержание цеха': 'operating', 'транспортные услуги': 'operating', 'услуги подрядчиков': 'operating',
+    'покупка ос': 'investing', 'возврат кредитов и займов': 'investing', 'выдача кредитов и займов': 'investing',
+    'лизинг': 'financing', 'оплаты по кредитам и займам': 'financing', 'получение кредитов и займов': 'financing', 'прочие поступл. от фин. операций': 'financing'
+  };
+  function defaultActivity(name) { return DEFAULT_ACTIVITY[lc(name).trim()] || 'none'; }
   var SYSTEM_ARTICLES = [{ name: 'Нераспределённые расходы', kind: 'expense' }, { name: 'Нераспределённые приходы', kind: 'income' }];
   function newArticle(f) {
     var kind = f.kind === 'income' ? 'income' : 'expense';
@@ -391,7 +403,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     records.forEach(function (r) {
       if (r.deleted || !r.article || isTransfer(r)) return;
       var k = lc(r.article); if (have[k]) return; have[k] = 1;
-      added.push(newArticle({ name: r.article, kind: r.amount < 0 ? 'expense' : 'income', activity: 'none' }));
+      added.push(newArticle({ name: r.article, kind: r.amount < 0 ? 'expense' : 'income', activity: defaultActivity(r.article) }));
     });
     return added;
   }
@@ -675,11 +687,13 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     var have = {}; (existing || []).forEach(function (r) { if (r.extId) have[r.extId] = 1; });
     var out = { records: [], skipped: 0, duplicates: 0 };
     function pick(o, names) { for (var i = 0; i < names.length; i++) for (var k in o) if (lc(k).trim() === names[i]) return o[k]; return ''; }
+    // колонки кошельков ищем по началу названия: в таблице «Альфа-банк (₽)», а не просто «Альфа-банк»
+    function pickWallet(o, name) { for (var k in o) { var l = lc(k).trim(); if (l === name || l.indexOf(name + ' ') === 0 || l.indexOf(name + '(') === 0) return o[k]; } return ''; }
     objs.forEach(function (o) {
       var date = parseDateInput(pick(o, ['дата операции', 'дата']));
       var wid = null, amt = 0;
       var cols = [['alfa', 'альфа-банк'], ['cash', 'наличные'], ['promos', 'промос']];
-      cols.forEach(function (c) { var v = parseMoney(pick(o, [c[1]])); if (v && !isNaN(v)) { wid = c[0]; amt = v; } });
+      cols.forEach(function (c) { var v = parseMoney(pickWallet(o, c[1])); if (v && !isNaN(v)) { wid = c[0]; amt = v; } });
       for (var k in o) if (lc(k).indexOf('кредит') >= 0 && lc(k).indexOf('лич') >= 0) { var v2 = parseMoney(o[k]); if (v2 && !isNaN(v2)) { wid = 'credit'; amt = v2; } }
       if (!date || !wid || !amt) { out.skipped++; return; }
       var ext = String(pick(o, ['id']) || '');
@@ -778,7 +792,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };
