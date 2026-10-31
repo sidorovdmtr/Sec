@@ -212,14 +212,22 @@
     var sub = tr ? transferText(r) + (r.description ? ' · ' + r.description : '') : [r.counterparty, r.description].filter(Boolean).join(', ');
     var meta = tr ? '' : [r.project, wname(r.wallet)].filter(Boolean).map(function (x) { return '<span class="pill">' + esc(x) + '</span>'; }).join('');
     var cls = tr ? '' : (r.amount < 0 ? 'neg' : 'pos');
-    return '<button type="button" class="op glass" data-act="edit" data-id="' + esc(r.id) + '"><div style="flex:1;min-width:0"><div class="t ' + (!tr && !r.article ? 'neg' : '') + '">' + esc(title) + '</div><div class="s">' + esc(sub) + '</div><div class="tags">' + meta + pills(r) + '</div></div><div class="t num ' + cls + '">' + amt + '</div></button>';
+    var d = (r.date || '').split('-'), dateTxt = d.length === 3 ? d[2] + '.' + d[1] + '.' + d[0] : '';
+    // телефон: заголовок, строка под ним, метки и сумма справа. Компьютер: столбцы как в таблице Финолога
+    var phone = '<div class="m-only" style="flex:1;min-width:0"><div class="t ' + (!tr && !r.article ? 'neg' : '') + '">' + esc(title) + '</div><div class="s">' + esc(sub) + '</div><div class="tags">' + meta + pills(r) + '</div></div>';
+    var line1 = tr ? 'Перевод между счетами' : (r.description || title), line2 = tr ? transferText(r) : [r.description ? r.article : '', r.project].filter(Boolean).join(' · ');
+    var desk = '<div class="c-date d-only">' + esc(dateTxt) + '</div><div class="c-amt d-only t num ' + cls + '">' + amt + '</div>' +
+      '<div class="c-main d-only"><div class="t ' + (!tr && !r.article ? 'neg' : '') + '">' + esc(line1) + '</div><div class="s">' + esc(line2) + '</div><div class="tags">' + pills(r) + '</div></div>' +
+      '<div class="c-cp d-only">' + esc(tr ? '' : r.counterparty || '') + '</div><div class="c-w d-only">' + esc(tr ? '' : wname(r.wallet)) + '</div>';
+    return '<button type="button" class="op row-op" data-act="edit" data-id="' + esc(r.id) + '">' + phone + '<div class="t num m-only ' + cls + '">' + amt + '</div>' + desk + '</button>';
   }
   function listHtml() {
     var all = KC.filterRecords(S.records, filterOpts()), list = collapsePairs(all), t = KC.today();
     if (!list.length) return '<div class="glass mu" style="padding:18px;text-align:center">' + (S.records.length ? 'Ничего не найдено' : 'Пока пусто') + '</div>';
-    return KC.groupByDay(list).map(function (g) {
-      return '<div class="dayh">' + esc(KC.dayLabel(g.date, t)) + '</div><div class="list">' + g.items.map(opRow).join('') + '</div>';
-    }).join('');
+    var head = '<div class="thead d-only"><div>Дата</div><div class="r">Сумма</div><div>Детали</div><div>Контрагент</div><div>Кошелёк</div></div>';
+    return '<div class="tbl">' + head + KC.groupByDay(list).map(function (g) {
+      return '<div class="dayh">' + esc(KC.dayLabel(g.date, t)) + '</div>' + g.items.map(opRow).join('');
+    }).join('') + '</div>';
   }
   function totalCard() {
     var b = KC.balances(S.records), vis = b.wallets.filter(function (w) { return !w.hidden; });

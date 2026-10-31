@@ -99,3 +99,23 @@ table.tb{width:100%;border-collapse:collapse;font-size:14px}table.tb th{font-siz
 /* масштаб экрана заблокирован: без двойного касания и без увеличения при вводе */
 html{touch-action:manipulation;-webkit-text-size-adjust:100%}
 @media (pointer:coarse){input,select,textarea{font-size:16px}}
+
+/* список операций одной таблицей, как у Финолога: на телефоне строки в одной карточке, на компьютере столбцы */
+.tbl{background:var(--card);border:var(--cardb);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+.tbl .dayh{margin:0;padding:8px 14px;background:rgba(127,127,127,.08);border-top:var(--cardb)}
+.tbl>:first-child{border-top:0}
+.row-op{border:0;border-top:var(--cardb);background:transparent;color:inherit;border-radius:0}
+.row-op:hover{background:rgba(127,127,127,.07)}
+.d-only{display:none}
+.tbl .thead{font-size:12px;color:var(--mu)}
+@media (min-width:900px){
+ .m-only{display:none!important}
+ .d-only{display:block}
+ .row-op,.tbl .thead{display:grid;grid-template-columns:96px 130px minmax(0,1fr) 260px 170px;gap:14px;align-items:start}
+ .tbl .thead{padding:12px 14px}.tbl .thead .r{text-align:right}
+ .row-op{padding:10px 14px}
+ .row-op .c-amt{text-align:right;white-space:nowrap}
+ .row-op .c-cp,.row-op .c-w{font-size:14px;overflow:hidden;text-overflow:ellipsis}
+ .row-op .c-main .t{font-weight:500}
+ .tbl .dayh{text-align:center}
+}
