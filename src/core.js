@@ -74,17 +74,17 @@
   // вне отчётов и оборота: переводы и корректировки остатка (в остатки кошельков входят)
   var ADJUST_ARTICLE = 'корректировка остатка';
   function isOffReport(r) { return isTransfer(r) || (r.article || '').trim().toLowerCase() === ADJUST_ARTICLE; }
-  // перевод, ждущий выписку, всегда в остатке: старое состояние pending у перевода читаем как unconfirmed
-  function bankStateOf(r) { return r.bankState === 'pending' && isTransfer(r) ? 'unconfirmed' : r.bankState; }
+  // запись, ждущая выписку, всегда в остатке: старое состояние pending читаем как unconfirmed (Дмитрий, 01.11.2026)
+  function bankStateOf(r) { return r.bankState === 'pending' ? 'unconfirmed' : r.bankState; }
   function typeOf(r) { return isTransfer(r) ? 'transfer' : (r.amount < 0 ? 'expense' : 'income'); }
 
-  // статус банка: none (наличные), pending (ждёт выписку, в остаток не входит), unconfirmed (Промос, в остатке),
+  // статус банка: none (наличные), pending (старое название unconfirmed), unconfirmed (ждёт выписку, в остатке),
   // confirmed (подтверждено выпиской), absent (в периоде выписки, но в ней нет)
   function defaultBankState(walletId, source) {
     var w = wallet(walletId);
     if (!w || !w.bank) return 'none';
     if (source === 'bank' || source === 'import') return 'confirmed';
-    return w.ledger ? 'unconfirmed' : 'pending';
+    return 'unconfirmed';
   }
   function newRecord(f) {
     var amt = Math.round(f.amount || 0), now = nowISO();
@@ -138,19 +138,18 @@
 
   /* ---------- остатки ---------- */
   function balances(records) {
-    var by = {}; WALLETS.forEach(function (w) { by[w.id] = { id: w.id, name: w.name, hidden: !!w.hidden, note: w.note || '', balance: 0, inTransit: 0, unconfirmed: 0 }; });
+    var by = {}; WALLETS.forEach(function (w) { by[w.id] = { id: w.id, name: w.name, hidden: !!w.hidden, note: w.note || '', balance: 0, unconfirmed: 0 }; });
     records.forEach(function (r) {
       if (r.deleted || r.planned) return;
       var w = wallet(r.wallet), a = by[r.wallet]; if (!w || !a) return;
       var st = bankStateOf(r);
-      if (w.bank && !w.ledger && st === 'pending') { a.inTransit += r.amount; return; }
       a.balance += r.amount;
       if (w.bank && (st === 'unconfirmed' || st === 'absent')) a.unconfirmed += r.amount;
     });
     var list = WALLETS.map(function (w) { return by[w.id]; });
-    var total = 0, transit = 0;
-    list.forEach(function (a) { if (!a.hidden) { total += a.balance + a.inTransit; transit += a.inTransit; } });
-    return { wallets: list, total: total, inTransit: transit };
+    var total = 0;
+    list.forEach(function (a) { if (!a.hidden) total += a.balance; });
+    return { wallets: list, total: total };
   }
 
   /* ---------- поиск и фильтры ---------- */

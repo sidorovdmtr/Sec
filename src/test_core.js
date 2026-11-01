@@ -34,14 +34,17 @@ eq('transfer states', [o.bankState, i.bankState], ['unconfirmed', 'none']);
 const bal = KC.balances([R({ wallet: 'alfa', amount: 10000000, source: 'bank' }), o, i]);
 eq('alfa balance includes unconfirmed transfer', bal.wallets[0].balance, 5000000);
 eq('alfa unconfirmed shown', bal.wallets[0].unconfirmed, -5000000);
-eq('no in transit for transfers', bal.inTransit, 0);
+eq('no in-transit field', bal.inTransit, undefined);
 eq('cash', bal.wallets[1].balance, 5000000);
 eq('total not distorted', bal.total, 10000000);
 // старый перевод в состоянии pending тоже входит в остаток и показан как неподтверждённый
 {
   const old = Object.assign({}, o, { bankState: 'pending' });
   const b2 = KC.balances([R({ wallet: 'alfa', amount: 10000000, source: 'bank' }), old, i]);
-  eq('legacy pending transfer in balance', [b2.wallets[0].balance, b2.inTransit, KC.bankStateOf(old)], [5000000, 0, 'unconfirmed']);
+  eq('legacy pending transfer in balance', [b2.wallets[0].balance, KC.bankStateOf(old)], [5000000, 'unconfirmed']);
+  const manual = R({ wallet: 'alfa', amount: -250000, date: T });
+  const legacy = Object.assign({}, manual, { bankState: 'pending' });
+  eq('manual alfa record is unconfirmed and in balance', [manual.bankState, KC.balances([manual]).wallets[0].balance, KC.balances([legacy]).wallets[0].balance, KC.balances([manual]).wallets[0].unconfirmed], ['unconfirmed', -250000, -250000, -250000]);
 }
 // «пары не найдено» из импорта — не номер пары
 {
@@ -234,7 +237,7 @@ function alfaScenario() {
 {
   const samples = KC.sampleRecords(T);
   const b = KC.balances(samples);
-  eq('sample transfers not in transit', KC.balances(samples.filter(KC.isTransfer)).inTransit, 0);
+  eq('sample has unconfirmed alfa in balance', b.wallets[0].unconfirmed !== 0, true);
   eq('sample unfilled', KC.unfilledCount(samples) >= 2, true);
   const g = KC.groupByDay(KC.filterRecords(samples, { month: '2026-11' }));
   eq('grouped days sorted desc', g.every((x, i) => i === 0 || g[i - 1].date > x.date), true);
