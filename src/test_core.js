@@ -43,6 +43,12 @@ eq('total not distorted', bal.total, 10000000);
   const b2 = KC.balances([R({ wallet: 'alfa', amount: 10000000, source: 'bank' }), old, i]);
   eq('legacy pending transfer in balance', [b2.wallets[0].balance, b2.inTransit, KC.bankStateOf(old)], [5000000, 0, 'unconfirmed']);
 }
+// «пары не найдено» из импорта — не номер пары
+{
+  const a = R({ wallet: 'alfa', amount: -100, kind: 'transfer_out', pairId: 'пары не найдено', source: 'import' });
+  const b = R({ wallet: 'cash', amount: 100, kind: 'transfer_in', pairId: 'пары не найдено', source: 'import' });
+  eq('fake pair id is not a pair', [KC.hasPair(a), KC.hasPair(o), KC.unpairedTransfers([a, b, o, i]).length], [false, true, 2]);
+}
 // переводы и корректировки не входят в отчёты и оборот, остатки сохраняют
 {
   const adj = R({ wallet: 'alfa', amount: 123400, article: 'Корректировка остатка', project: 'Икс', date: T, source: 'import' });

@@ -176,7 +176,7 @@
   function filterOpts() { return { month: S.project ? '' : S.month, type: S.type, query: S.query, project: S.project, unfilled: S.unfilled }; }
   function transferText(r) {
     var other = null;
-    if (r.pairId) for (var i = 0; i < S.records.length; i++) { var x = S.records[i]; if (x.pairId === r.pairId && x.id !== r.id && !x.deleted) { other = x; break; } }
+    if (KC.hasPair(r)) for (var i = 0; i < S.records.length; i++) { var x = S.records[i]; if (x.pairId === r.pairId && x.id !== r.id && !x.deleted) { other = x; break; } }
     var out = r.kind === 'transfer_out' ? r : other, inn = r.kind === 'transfer_in' ? r : other;
     if (out && inn) return wname(out.wallet) + ' → ' + wname(inn.wallet);
     return r.kind === 'transfer_out' ? wname(r.wallet) + ' → ?' : '? → ' + wname(r.wallet);
@@ -184,7 +184,7 @@
   function pills(r) {
     var p = [];
     if (r.planned) p.push('<span class="pill">план</span>');
-    if (KC.isTransfer(r)) { p.push('<span class="pill">перевод</span>'); if (!r.pairId) p.push('<span class="pill warn">нет пары</span>'); }
+    if (KC.isTransfer(r)) { p.push('<span class="pill">перевод</span>'); if (!KC.hasPair(r)) p.push('<span class="pill warn">нет пары</span>'); }
     var w = KC.wallet(r.wallet);
     if (w && w.bank) {
       var st = KC.bankStateOf(r);
@@ -568,7 +568,7 @@
   function deleteRec(id) {
     var rec = byId(id); if (!rec) return;
     var ids = [id];
-    if (rec.pairId) S.records.forEach(function (x) { if (x.pairId === rec.pairId && x.id !== id && !x.deleted) ids.push(x.id); });
+    if (KC.hasPair(rec)) S.records.forEach(function (x) { if (x.pairId === rec.pairId && x.id !== id && !x.deleted) ids.push(x.id); });
     commit({ patches: ids.map(function (i) { return { id: i, patch: { deleted: true } }; }) }, 'delete', 'Удалена операция ' + money(rec.amount) + (ids.length > 1 ? ' (перевод, обе записи)' : ''), id);
     closeForm(); render();
     toast('Удалено', 'Отменить', function () { commit({ patches: ids.map(function (i) { return { id: i, patch: { deleted: false } }; }) }, 'restore', 'Восстановлена операция', id); render(); });

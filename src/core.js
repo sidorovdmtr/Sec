@@ -132,7 +132,9 @@
     return m;
   }
   function unfilledCount(records) { var n = 0; records.forEach(function (r) { if (!r.deleted && missingFields(r).length) n++; }); return n; }
-  function unpairedTransfers(records) { return records.filter(function (r) { return !r.deleted && isTransfer(r) && !r.pairId; }); }
+  // у части импортированных переводов в колонке пары стоит текст «пары не найдено»: это не номер пары
+  function hasPair(r) { return !!r.pairId && r.pairId !== 'пары не найдено'; }
+  function unpairedTransfers(records) { return records.filter(function (r) { return !r.deleted && isTransfer(r) && !hasPair(r); }); }
 
   /* ---------- остатки ---------- */
   function balances(records) {
@@ -671,7 +673,7 @@
     WALLETS: WALLETS, wallet: wallet, parseMoney: parseMoney, formatMoney: formatMoney,
     isoDate: isoDate, today: today, diffDays: diffDays, addDays: addDays, monthKey: monthKey, monthLabel: monthLabel, shiftMonth: shiftMonth,
     dayLabel: dayLabel, shortDate: shortDate, parseDateInput: parseDateInput, validDate: validDate,
-    uid: uid, nowISO: nowISO, isTransfer: isTransfer, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
+    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
     missingFields: missingFields, unfilledCount: unfilledCount, unpairedTransfers: unpairedTransfers, defaultBankState: defaultBankState,
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
