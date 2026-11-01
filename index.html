@@ -1767,13 +1767,32 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (map.date == null || (map.amount == null && map.debit == null && map.credit == null)) return { error: 'не определены колонки даты и суммы' };
     return { rows: KC.rowsFromTable(table, hi, map).rows };
   }
+  // расчёт загрузки выписки без внесения данных
+  function previewStatement(walletId, rows) {
+    var pendingKeys = S.decisions.filter(function (x) { return !x.resolvedAt && x.row; }).map(function (x) { return x.row.key; });
+    var res = KC.reconcile({ records: S.records, wallet: walletId, rows: rows, ignored: S.meta.ignoredKeys, skipKeys: pendingKeys });
+    var st = res.stats, addSum = 0, absentSum = 0; res.newRecords.forEach(function (r) { addSum += r.amount; });
+    return { res: res, addSum: addSum, changes: st.matched + st.added + st.decisions + st.absent > 0 };
+  }
+  function previewText(f, pv) {
+    var st = pv.res.stats, per = pv.res.period;
+    var t = 'Выписка «' + f.name + '» (' + wname(f.wallet) + ')' + (per ? ', период ' + ruDate(per.from) + ' — ' + ruDate(per.to) : '') + '\n\n' +
+      'Строк в файле: ' + st.rows + '\n' +
+      'Привязать к уже внесённым записям: ' + st.matched + '\n' +
+      'Добавить новых записей: ' + st.added + (st.added ? ' (на сумму ' + money(pv.addSum, { sign: true }) + ', остаток кошелька изменится на эту сумму)' : '') + '\n' +
+      'Уже загружены раньше (дубли, пропускаются): ' + st.duplicates + '\n' +
+      'Потребуют вашего решения: ' + st.decisions + '\n' +
+      (st.absent ? 'Помечены «нет в выписке»: ' + st.absent + '\n' : '');
+    if (st.added) t += '\nВНИМАНИЕ: если эти операции уже есть в учёте, новые записи создадут дубли. Проверьте цифры.\n';
+    return t + '\nВнести эти данные?';
+  }
   function syncStatements() {
     if (S.stmBusy) return;
     if (!S.meta.stmUrl) return toast('Сначала вставьте ссылку скрипта выписок (внизу этого экрана)');
     if (!S.online) return toast('Нет связи: синхронизация выписок недоступна');
     if (!window.XLSX) return toast('Библиотека xlsx не загрузилась (нет связи). Повторите позже.');
     S.stmBusy = true; setStmStatus('Проверяю папку…');
-    var issues = [], done = [], total = { rows: 0, matched: 0, added: 0, decisions: 0 };
+    var issues = [], done = [], declined = [], total = { rows: 0, matched: 0, added: 0, decisions: 0 };
     stmFetch({ action: 'list' }).then(function (j) {
       var found = KC.newStatementFiles(j.files || [], S.meta.stmFiles);
       found.unknown.forEach(function (f) { issues.push('«' + f.name + '»: не понятно, Альфа это или Промос (в названии нет «Выписка» или «Промос»)'); });
@@ -1784,6 +1803,11 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
           return stmFetch({ action: 'file', id: f.id }).then(function (j2) {
             var p = parseStatementBytes(b64ToBytes(j2.base64));
             if (p.error) { issues.push('«' + f.name + '»: ' + p.error); return; }
+            // предпросмотр: считаем результат без внесения и спрашиваем подтверждение, если что-то изменится
+            var pv = previewStatement(f.wallet, p.rows), ps = pv.res.stats;
+            if (pv.changes) {
+              if (!confirm(previewText(f, pv))) { declined.push(f.name); return; }
+            }
             var st = applyStatement(f.wallet, p.rows, f.name, true);
             S.meta.stmFiles[f.key] = { name: f.name, wallet: f.wallet, at: KC.nowISO(), rows: st.rows };
             done.push(f.name); total.rows += st.rows; total.matched += st.matched; total.added += st.added; total.decisions += st.decisions;
@@ -1794,6 +1818,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     }).then(function (found) {
       S.meta.stmCheckedAt = KC.nowISO(); persist();
       var msg = done.length ? 'Загружено выписок: ' + done.length + ' (строк ' + total.rows + ', привязано ' + total.matched + ', добавлено ' + total.added + ', нужно решение ' + total.decisions + ')' : 'Новых выписок не найдено';
+      if (declined.length) msg = (done.length ? msg + '. ' : '') + 'Не внесено по вашему отказу: ' + declined.join(', ') + ' (при следующей синхронизации вопрос повторится)';
       if (issues.length) msg += '. Не загружено: ' + issues.join('; ');
       S.stmMsg = msg; S.stmBusy = false; render(); toast(msg);
     }).catch(function (e) {

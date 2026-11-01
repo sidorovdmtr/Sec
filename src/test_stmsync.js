@@ -21,6 +21,8 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
+  const dialogs = []; let declineNext = false;
+  page.on('dialog', async (d) => { dialogs.push(d.message()); if (declineNext) { declineNext = false; await d.dismiss(); } else await d.accept(); });
   const KEY = 'secretkey123';
   const folder = [{ id: 'f1', name: 'Выписка_40702810626180001762_30.10.2026.xlsx', size: 7270, modified: '2026-11-01T18:30:39.000Z', buf: ALFA }];
   let fileCalls = 0, listCalls = 0, blockFetch = false;
@@ -74,6 +76,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   // 2. первая синхронизация: Альфа читается, всё привязывается, новых записей нет, остаток не меняется
   await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(600);
   const t1 = await toastTxt();
+  ok('preview asked before first load', dialogs.length === 1 && /Привязать к уже внесённым записям: 3/.test(dialogs[0]) && /Добавить новых записей: 0/.test(dialogs[0]) && /Внести эти данные\?/.test(dialogs[0]), dialogs[0]);
   ok('first sync loads 1 file, 3 rows linked, none added', /Загружено выписок: 1 \(строк 3, привязано 3, добавлено 0/.test(t1), t1);
   ok('records and balance unchanged', (await page.evaluate(() => KCApp.S.records.length)) === n0 && (await page.evaluate(() => KC.balances(KCApp.S.records).total)) === bal0);
   ok('file remembered', (await page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === 1);
@@ -104,6 +107,16 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   const diag = await page.locator('#stmstatus').innerText();
   ok('diag reports both transports', /Обычный запрос: ответ получен/.test(diag) && /Вставка скриптом: ответ получен/.test(diag) && /без отправки адреса/.test(diag), diag);
   ok('diag does not leak key', diag.indexOf('secretkey123') < 0 && diag.indexOf('key=') < 0, diag);
+  // отказ в предпросмотре: данные не вносятся, файл не помечается прочитанным; потом можно подтвердить
+  folder.push({ id: 'f6', name: 'Выписка_40702810626180001762_02.11.2026.xlsx', size: 7400, modified: '2026-11-03T12:00:00.000Z', buf: book([['Выписка по счёту'], H, ['02.11.2026', '9', '5,000.00', '', 'АО «Новый»', '', '', '', '', '', 'Оплата по счету 9', '', 'Платежное поручение']]) });
+  const nBeforeDecline = await page.evaluate(() => KCApp.S.records.length), filesBefore = await page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length);
+  declineNext = true; dialogs.length = 0;
+  await page.click('.nav button[data-v="statements"]');
+  await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(800);
+  ok('preview shows new record and its sum', dialogs.length >= 1 && /Добавить новых записей: 1 \(на сумму/.test(dialogs[0]) && /ВНИМАНИЕ/.test(dialogs[0]), dialogs[0]);
+  ok('declined: nothing added, file not remembered', (await page.evaluate(() => KCApp.S.records.length)) === nBeforeDecline && (await page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === filesBefore && (await toastTxt()).indexOf('по вашему отказу') >= 0, await toastTxt());
+  await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(800);
+  ok('asked again and accepted: record added', (await page.evaluate(() => KCApp.S.records.length)) === nBeforeDecline + 1, await toastTxt());
   // 7. Safari блокирует обычный запрос: инструмент переходит на загрузку скриптом-вставкой и всё равно читает выписку
   blockFetch = true;
   folder.push({ id: 'f4', name: 'Выписка_40702810626180001762_01.11.2026.xlsx', size: 7300, modified: '2026-11-04T09:00:00.000Z', buf: ALFA });
@@ -114,7 +127,6 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(500);
   ok('fallback: second run no new statements', (await toastTxt()).indexOf('Новых выписок не найдено') >= 0, await toastTxt());
   // исправление сдвинутых дат импорта: кнопка в Настройках, подтверждение, остатки не меняются
-  page.on('dialog', d => d.accept());
   await page.evaluate(() => { const r = KC.newRecord({ wallet: 'cash', amount: -777, date: '2026-10-29', accrualDate: '2026-10-29', source: 'import', extId: 'X1', article: 'Тест', project: '' }); KCApp.commit({ newRecords: [r] }); });
   const balBefore = await page.evaluate(() => KC.balances(KCApp.S.records).total);
   await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="data"]');
