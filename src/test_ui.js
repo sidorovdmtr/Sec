@@ -12,7 +12,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text())) errors.push(m.text()); });
   page.on('dialog', d => d.accept());
-  await page.goto(FILE);
+  await page.goto(FILE); await page.waitForFunction(() => window.KCApp);
   const txt = async (sel) => (await page.locator(sel).first().innerText()).replace(/\u00A0/g, ' ');
   const rows = () => page.locator('#list .op').count();
 
@@ -40,7 +40,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   // 4. тема
   await page.click('button[data-act="theme"]');
   ok('theme light', (await page.getAttribute('html', 'data-theme')) === 'light');
-  await page.reload();
+  await page.waitForTimeout(150); await page.reload(); await page.waitForFunction(() => window.KCApp);
   ok('theme persists', (await page.getAttribute('html', 'data-theme')) === 'light');
   await page.click('button[data-act="theme"]');
   ok('theme dark again', (await page.getAttribute('html', 'data-theme')) === 'dark');
@@ -270,7 +270,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   await page.click('button[data-act="art-close"]');
   // статьи из записей попадают в справочник сами (как при загрузке сводной таблицы)
   await page.evaluate(() => { const r = KC.newRecord({ wallet: 'cash', amount: -500, article: 'Статья из таблицы' }); KCApp.commit({ newRecords: [r] }); });
-  await page.reload();
+  await page.waitForTimeout(150); await page.reload(); await page.waitForFunction(() => window.KCApp);
   const fromTable = await page.evaluate(() => KCApp.S.meta.articles.find(a => a.name === 'Статья из таблицы'));
   ok('unknown article added to catalog with undefined activity', fromTable && fromTable.activity === 'none' && fromTable.kind === 'expense', fromTable);
   await page.click('.nav button[data-v="settings"]');
@@ -318,7 +318,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
 
   // 14. широкий экран: панель и боковая навигация
   await page.setViewportSize({ width: 1360, height: 900 });
-  await page.reload();
+  await page.waitForTimeout(150); await page.reload(); await page.waitForFunction(() => window.KCApp);
   await page.click('button[data-act="seed"]');
   ok('desktop panel visible', await page.locator('.desk').isVisible());
   ok('desktop nav left', (await page.evaluate(() => document.querySelector('.nav').getBoundingClientRect().left)) === 0 && (await page.evaluate(() => document.querySelector('.nav').getBoundingClientRect().width)) < 110);
