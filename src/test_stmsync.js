@@ -23,12 +23,20 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   const page = await ctx.newPage();
   const KEY = 'secretkey123';
   const folder = [{ id: 'f1', name: 'Выписка_40702810626180001762_30.10.2026.xlsx', size: 7270, modified: '2026-11-01T18:30:39.000Z', buf: ALFA }];
-  let fileCalls = 0, listCalls = 0;
+  let fileCalls = 0, listCalls = 0, blockFetch = false;
   await page.route(/^https?:/, async (route) => {
     const u = new URL(route.request().url());
     if (u.hostname === 'cdnjs.cloudflare.com') return route.fulfill({ contentType: 'application/javascript', body: fs.readFileSync(XLSX_JS) });
     if (u.hostname === 'script.google.com') {
+      const cb = u.searchParams.get('callback');
+      if (blockFetch && route.request().resourceType() === 'fetch') return route.abort(); // как Safari: запрос между сайтами блокируется
       const h = { 'access-control-allow-origin': '*' };
+      if (cb) {
+        const send = (o) => route.fulfill({ contentType: 'application/javascript', body: cb + '(' + JSON.stringify(o) + ');' });
+        if (u.searchParams.get('key') !== KEY) return send({ error: 'forbidden' });
+        if (u.searchParams.get('action') === 'list') { listCalls++; return send({ ok: true, files: folder.map(f => ({ id: f.id, name: f.name, size: f.size, modified: f.modified })) }); }
+        if (u.searchParams.get('action') === 'file') { fileCalls++; const f = folder.find(x => x.id === u.searchParams.get('id')); return send({ ok: true, name: f.name, base64: f.buf.toString('base64') }); }
+      }
       if (u.searchParams.get('key') !== KEY) return route.fulfill({ contentType: 'application/json', headers: h, body: JSON.stringify({ error: 'forbidden' }) });
       if (u.searchParams.get('action') === 'list') { listCalls++; return route.fulfill({ contentType: 'application/json', headers: h, body: JSON.stringify({ ok: true, files: folder.map(f => ({ id: f.id, name: f.name, size: f.size, modified: f.modified })) }) }); }
       if (u.searchParams.get('action') === 'file') { fileCalls++; const f = folder.find(x => x.id === u.searchParams.get('id')); return route.fulfill({ contentType: 'application/json', headers: h, body: JSON.stringify({ ok: true, name: f.name, base64: f.buf.toString('base64') }) }); }
@@ -90,6 +98,15 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   // 6. состояние переживает перезагрузку
   await page.waitForTimeout(150); await page.reload(); await ready();
   ok('url and files persist', await page.evaluate(() => !!KCApp.S.meta.stmUrl && Object.keys(KCApp.S.meta.stmFiles).length >= 2));
+  // 7. Safari блокирует обычный запрос: инструмент переходит на загрузку скриптом-вставкой и всё равно читает выписку
+  blockFetch = true;
+  folder.push({ id: 'f4', name: 'Выписка_40702810626180001762_01.11.2026.xlsx', size: 7300, modified: '2026-11-04T09:00:00.000Z', buf: ALFA });
+  await page.click('.nav button[data-v="statements"]');
+  await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(800);
+  const t3 = await toastTxt();
+  ok('fallback loads file when fetch is blocked', /Загружено выписок: 1/.test(t3), t3);
+  await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(500);
+  ok('fallback: second run no new statements', (await toastTxt()).indexOf('Новых выписок не найдено') >= 0, await toastTxt());
   await browser.close();
   console.log(pass + ' passed, ' + fail + ' failed'); process.exit(fail ? 1 : 0);
 })().catch(e => { console.log('CRASH', e.message); process.exit(1); });

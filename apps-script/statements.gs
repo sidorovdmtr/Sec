@@ -20,9 +20,10 @@ function showLink() {
 }
 
 function doGet(e) {
-  var key = PropertiesService.getScriptProperties().getProperty('KEY'), q = (e && e.parameter) || {};
-  if (!key || FOLDER_ID.indexOf('ВСТАВЬТЕ') === 0) return out_({ error: 'not_configured' });
-  if (q.key !== key) return out_({ error: 'forbidden' });
+  var q = (e && e.parameter) || {}, cb = /^[A-Za-z_][A-Za-z0-9_]{0,60}$/.test(q.callback || '') ? q.callback : '';
+  var key = PropertiesService.getScriptProperties().getProperty('KEY');
+  if (!key || FOLDER_ID.indexOf('ВСТАВЬТЕ') === 0) return out_({ error: 'not_configured' }, cb);
+  if (q.key !== key) return out_({ error: 'forbidden' }, cb);
   var folder = DriveApp.getFolderById(FOLDER_ID);
   if (q.action === 'list') {
     var it = folder.getFiles(), files = [];
@@ -30,15 +31,20 @@ function doGet(e) {
       var f = it.next(), n = f.getName();
       if (/\.(xlsx|xls)$/i.test(n)) files.push({ id: f.getId(), name: n, size: f.getSize(), modified: f.getLastUpdated().toISOString() });
     }
-    return out_({ ok: true, files: files });
+    return out_({ ok: true, files: files }, cb);
   }
   if (q.action === 'file' && q.id) {
     var file = DriveApp.getFileById(q.id), inFolder = false, parents = file.getParents();
     while (parents.hasNext()) if (parents.next().getId() === FOLDER_ID) inFolder = true;
-    if (!inFolder) return out_({ error: 'not_in_folder' });
-    return out_({ ok: true, name: file.getName(), base64: Utilities.base64Encode(file.getBlob().getBytes()) });
+    if (!inFolder) return out_({ error: 'not_in_folder' }, cb);
+    return out_({ ok: true, name: file.getName(), base64: Utilities.base64Encode(file.getBlob().getBytes()) }, cb);
   }
-  return out_({ error: 'bad_action' });
+  return out_({ error: 'bad_action' }, cb);
 }
 
-function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+// Если задан callback (имя функции), ответ отдаётся как JavaScript: так его принимает Safari на iPhone, который блокирует обычные запросы между сайтами.
+function out_(o, cb) {
+  var json = JSON.stringify(o);
+  if (cb) return ContentService.createTextOutput(cb + '(' + json + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+  return ContentService.createTextOutput(json).setMimeType(ContentService.MimeType.JSON);
+}
