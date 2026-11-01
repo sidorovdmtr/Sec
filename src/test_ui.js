@@ -297,6 +297,14 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   const p = await dl.path(); const fs = require('fs'); const json = JSON.parse(fs.readFileSync(p, 'utf8'));
   ok('backup json', json.app === 'kubcrafter-money' && json.records.length === (await page.evaluate(() => KCApp.S.records.length)), json.records.length);
   ok('backup filename', /kubcrafter-dengi-test-\d{4}-\d{2}-\d{2}\.json/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  // iPhone: JSON отдаётся через меню «Поделиться» одним файлом (имитация)
+  await page.evaluate(() => { window.__shared = null; navigator.canShare = () => true; navigator.share = (d) => { window.__shared = d; return d.files[0].text().then(t => { window.__sharedText = t; }); }; });
+  await page.click('button[data-act="backup"]');
+  await page.waitForTimeout(200);
+  const sh = await page.evaluate(() => ({ n: window.__shared && window.__shared.files.length, name: window.__shared && window.__shared.files[0].name, t: window.__sharedText }));
+  ok('share sheet gets one json file', sh.n === 1 && /\.json$/.test(sh.name) && JSON.parse(sh.t).app === 'kubcrafter-money', sh.name);
+  await page.evaluate(() => { delete navigator.canShare; delete navigator.share; });
+  ok('separate xlsx button', (await page.locator('button[data-act="backupxlsx"]').count()) === 1);
   // восстановление
   await page.evaluate(() => { KCApp.S.records.length = 2; KCApp.commit({}); });
   await page.setInputFiles('#restorefile', p);
