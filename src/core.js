@@ -62,7 +62,8 @@
   function shortDate(s) { var p = s.split('-'); return (+p[2]) + ' ' + MONTHS_GEN[+p[1] - 1]; }
   function parseDateInput(v) {
     if (v == null || v === '') return '';
-    if (v instanceof Date && !isNaN(v)) return isoDate(v);
+    // библиотека xlsx в некоторых поясах (Москва) отдаёт полночь как 23:59:43 предыдущего дня: прибавляем 10 минут, чтобы получить нужные сутки
+    if (v instanceof Date && !isNaN(v)) return isoDate(new Date(v.getTime() + 10 * 60 * 1000));
     if (typeof v === 'number' && v > 20000 && v < 80000) { // серийный номер Excel
       var t = new Date(Math.round((v - 25569) * 86400000));
       return t.getUTCFullYear() + '-' + pad(t.getUTCMonth() + 1) + '-' + pad(t.getUTCDate());
@@ -657,6 +658,21 @@
   }
   function mergeProcessed(a, b) { return Object.assign({}, b || {}, a || {}); }
 
+
+  // Исправление записей, загруженных из сводной таблицы со сдвигом даты на день назад (ошибка чтения дат xlsx в поясе Москвы).
+  // Затрагивает только записи импорта (source import с номером extId), которые ещё не исправлены. Остатки не меняются.
+  function importDateFixPatches(records) {
+    var patches = [];
+    records.forEach(function (r) {
+      if (r.deleted || r.source !== 'import' || !r.extId || r.dateFixed) return;
+      var p = { dateFixed: true };
+      if (validDate(r.date)) p.date = addDays(r.date, 1);
+      if (r.accrualDate && validDate(r.accrualDate)) p.accrualDate = addDays(r.accrualDate, 1);
+      patches.push({ id: r.id, patch: p });
+    });
+    return patches;
+  }
+
   /* ---------- копии ---------- */
   var BACKUP_VERSION = 1;
   function backupObject(state) {
@@ -728,7 +744,7 @@
     WALLETS: WALLETS, wallet: wallet, parseMoney: parseMoney, formatMoney: formatMoney,
     isoDate: isoDate, today: today, diffDays: diffDays, addDays: addDays, monthKey: monthKey, monthLabel: monthLabel, shiftMonth: shiftMonth,
     dayLabel: dayLabel, shortDate: shortDate, parseDateInput: parseDateInput, validDate: validDate,
-    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
+    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, importDateFixPatches: importDateFixPatches, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
     missingFields: missingFields, unfilledCount: unfilledCount, unpairedTransfers: unpairedTransfers, defaultBankState: defaultBankState,
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,

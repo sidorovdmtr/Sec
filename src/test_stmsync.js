@@ -113,6 +113,17 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   ok('fallback loads file when fetch is blocked', /Загружено выписок: 1/.test(t3), t3);
   await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(500);
   ok('fallback: second run no new statements', (await toastTxt()).indexOf('Новых выписок не найдено') >= 0, await toastTxt());
+  // исправление сдвинутых дат импорта: кнопка в Настройках, подтверждение, остатки не меняются
+  page.on('dialog', d => d.accept());
+  await page.evaluate(() => { const r = KC.newRecord({ wallet: 'cash', amount: -777, date: '2026-10-29', accrualDate: '2026-10-29', source: 'import', extId: 'X1', article: 'Тест', project: '' }); KCApp.commit({ newRecords: [r] }); });
+  const balBefore = await page.evaluate(() => KC.balances(KCApp.S.records).total);
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="data"]');
+  await page.click('button[data-act="datefix"]'); await page.waitForTimeout(300);
+  const fixed = await page.evaluate(() => KCApp.S.records.filter(r => r.extId === 'X1').map(r => [r.date, r.accrualDate, !!r.dateFixed]));
+  ok('date fix shifts imported record +1 day', JSON.stringify(fixed) === JSON.stringify([['2026-10-30', '2026-10-30', true]]), fixed);
+  ok('date fix keeps balance', (await page.evaluate(() => KC.balances(KCApp.S.records).total)) === balBefore);
+  await page.click('button[data-act="datefix"]'); await page.waitForTimeout(200);
+  ok('date fix second run: nothing to fix', (await toastTxt()).indexOf('Нечего исправлять') >= 0 || (await page.evaluate(() => KC.importDateFixPatches(KCApp.S.records).length)) === 0, await toastTxt());
   await browser.close();
   console.log(pass + ' passed, ' + fail + ' failed'); process.exit(fail ? 1 : 0);
 })().catch(e => { console.log('CRASH', e.message); process.exit(1); });

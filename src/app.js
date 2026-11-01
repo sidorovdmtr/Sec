@@ -423,6 +423,7 @@
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Резервная копия</div><div class="small mu">' + (S.meta.lastBackupAt ? 'Последняя копия: ' + esc(ruDate(S.meta.lastBackupAt)) + '.' : 'Копия ещё не делалась.') + ' JSON нужен для восстановления, xlsx только для просмотра. На iPhone JSON откроется в меню «Поделиться»: выберите «Сохранить в Файлы». Раз в неделю копию нужно сохранять на Google Диск: автоматически этот шаг пока не работает, нужен серверный планировщик.</div><button type="button" class="btn main" data-act="backup">Скачать копию для восстановления (JSON)</button><button type="button" class="btn" data-act="backupxlsx">Скачать таблицу для просмотра (xlsx)</button>' +
       '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Восстановить из копии (JSON)<input type="file" accept=".json,application/json" id="restorefile" hidden></label></div>';
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Импорт сводной таблицы</div><div class="small mu">Таблица с колонками Финолога (xlsx). Ниже можно указать, сколько первых строк загрузить: для проверки хватит 5.</div><input id="importlimit" class="input" type="text" inputmode="numeric" placeholder="Сколько строк загрузить (пусто = все)"><label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Выбрать файл xlsx<input type="file" accept=".xlsx,.xls" id="summaryfile" hidden></label></div>';
+    out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Исправление дат импорта</div><div class="small mu">Если сводная таблица была загружена до 02.11.2026, её даты могли сдвинуться на день назад (например, 30 октября записано как 29 октября). Кнопка покажет, сколько записей затронуто, и спросит подтверждение. Остатки не меняются. Сначала сделайте копию.</div><button type="button" class="btn" data-act="datefix">Исправить даты импорта</button></div>';
     if (S.mode === 'test') out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Тестовая база</div><div class="small mu">Выдуманные данные для проверки. Сброс удаляет всю тестовую базу целиком, рабочая база не затрагивается.</div><button type="button" class="btn" data-act="seed">Добавить тестовые данные</button><button type="button" class="btn danger" data-act="resetTest">Сбросить тестовую базу</button></div>';
     var log = S.log.slice(-30).reverse();
     out += '<div class="dayh">Журнал изменений</div><div class="glass" style="padding:4px 14px">' + (log.length ? '<table class="tb"><tbody>' + log.map(function (l) { return '<tr><td class="mu small" style="white-space:nowrap">' + esc(ruDate(l.at)) + '</td><td>' + esc(l.summary) + '</td></tr>'; }).join('') + '</tbody></table>' : '<div class="small mu" style="padding:12px 0">Пока пусто</div>') + '</div>';
@@ -980,6 +981,15 @@
     var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     return download(backupBase() + '.xlsx', new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   }
+  function doDateFix() {
+    var patches = KC.importDateFixPatches(S.records);
+    if (!patches.length) return toast('Нечего исправлять: записей импорта с несдвинутыми датами нет');
+    var sample = byId(patches[0].id), p0 = patches[0].patch;
+    var ex = sample ? ruDate(sample.date) + ' → ' + ruDate(p0.date) + ', ' + money(sample.amount, { sign: true }) : '';
+    if (!confirm('Записей импорта: ' + patches.length + '. Даты и даты начисления сдвинутся на +1 день. Пример: ' + ex + '. Остатки не изменятся. Копия сделана? Продолжить?')) return;
+    commit({ patches: patches }, 'fixdates', 'Исправлен сдвиг дат импорта сводной таблицы: ' + patches.length + ' записей (+1 день)');
+    render(); toast('Даты исправлены: ' + patches.length + ' записей');
+  }
   function doRestore(file) {
     var fr = new FileReader();
     fr.onload = function () {
@@ -1059,6 +1069,7 @@
     if (a === 'seedcat') { var have = {}; S.meta.articles.forEach(function (x) { have[x.name.toLowerCase()] = 1; }); var sc = KC.sampleCatalog().filter(function (x) { return !have[x.name.toLowerCase()]; }); S.meta.articles = S.meta.articles.concat(sc); addLog('catalog', 'Добавлен тестовый список статей (' + sc.length + ')'); persist(); render(); return toast('Добавлен тестовый список статей'); }
     if (a === 'seed') { var hv = {}; S.meta.articles.forEach(function (x) { hv[x.name.toLowerCase()] = 1; }); S.meta.articles = S.meta.articles.concat(KC.sampleCatalog().filter(function (x) { return !hv[x.name.toLowerCase()]; })); var smp = KC.sampleRecords(); commit({ newRecords: smp }, 'import', 'Добавлены тестовые данные (' + smp.length + ' записей)'); render(); return toast('Добавлены выдуманные тестовые данные'); }
     if (a === 'resetTest') return resetTest();
+    if (a === 'datefix') return doDateFix();
     if (a === 'stmsync') return syncStatements();
     if (a === 'stmdiag') return stmDiag();
     if (a === 'stmurlsave') return saveStmUrl();

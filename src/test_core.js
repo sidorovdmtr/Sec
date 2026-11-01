@@ -459,5 +459,23 @@ eq('parseMoney ru style', ['1 215,50', '1.215,00', '12,5', '\u22125,00', '1215,5
   eq('balance unchanged by linking', KC.balances(linked).wallets[0].balance, KC.balances(recs).wallets[0].balance);
 }
 
+// ---- даты из xlsx: полночь минус 17 секунд (Москва) не должна уходить на предыдущие сутки ----
+eq('Date midnight-17s -> next day', KC.parseDateInput(new Date(2026, 9, 29, 23, 59, 43)), '2026-10-30');
+eq('Date exact midnight', KC.parseDateInput(new Date(2026, 9, 30, 0, 0, 0)), '2026-10-30');
+eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), '2026-10-30');
+// ---- исправление дат ранее загруженного импорта ----
+{
+  const a = KC.newRecord({ wallet: 'alfa', amount: -100, date: '2026-10-29', accrualDate: '2026-10-29', source: 'import', extId: '91' });
+  const b = KC.newRecord({ wallet: 'alfa', amount: -100, date: '2026-10-31', source: 'import' }); // без номера импорта
+  const c = KC.newRecord({ wallet: 'cash', amount: -100, date: '2026-11-01', source: 'phone' });
+  const d = KC.newRecord({ wallet: 'alfa', amount: -100, date: '2026-10-30', source: 'import', extId: '92' }); d.dateFixed = true;
+  const e = KC.newRecord({ wallet: 'alfa', amount: -100, date: '2026-09-30', source: 'import', extId: '93' });
+  const ps = KC.importDateFixPatches([a, b, c, d, e]);
+  eq('date fix targets only unfixed import', ps.map(p => p.id).sort(), [a.id, e.id].sort());
+  eq('date fix shifts +1 day incl. month end', [ps.find(p => p.id === a.id).patch.date, ps.find(p => p.id === a.id).patch.accrualDate, ps.find(p => p.id === e.id).patch.date], ['2026-10-30', '2026-10-30', '2026-10-01']);
+  const done = [a, e].map(r => Object.assign({}, r, ps.find(p => p.id === r.id).patch));
+  eq('date fix is idempotent', KC.importDateFixPatches(done).length, 0);
+  eq('date fix keeps balances', KC.balances(done).total, KC.balances([a, e]).total);
+}
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
