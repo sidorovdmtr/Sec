@@ -88,6 +88,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
 
   // 7. перевод одним действием
   const nBefore = await page.evaluate(() => KCApp.S.records.length);
+  const trBefore = await page.locator('#list .op', { hasText: 'перевод' }).count(), unBefore = await page.locator('#list .op', { hasText: 'не подтверждено выпиской' }).count();
   await page.click('button[data-act="newrec"]');
   await page.click('button[data-act="ftype"][data-v="transfer"]');
   await page.fill('#f-amount', '1000');
@@ -97,7 +98,14 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   const nAfter = await page.evaluate(() => KCApp.S.records.length);
   ok('transfer = two records', nAfter === nBefore + 2, [nBefore, nAfter]);
   const pair = await page.evaluate(() => KCApp.S.records.slice(-2));
-  ok('transfer pair ids', pair[0].pairId && pair[0].pairId === pair[1].pairId && pair[0].amount === -pair[1].amount && pair[0].bankState === 'pending' && pair[1].bankState === 'none', pair);
+  ok('transfer pair ids', pair[0].pairId && pair[0].pairId === pair[1].pairId && pair[0].amount === -pair[1].amount && pair[0].bankState === 'unconfirmed' && pair[1].bankState === 'none', pair);
+
+  // перевод: обе записи видны в журнале с отметкой «перевод», у банковской стороны статус, блока «в пути» нет
+  await page.waitForTimeout(100);
+  const trRows = await page.locator('#list .op', { hasText: 'перевод' }).count();
+  ok('transfer both records visible', trRows === trBefore + 2, [trBefore, trRows]);
+  ok('transfer unconfirmed status shown', (await page.locator('#list .op', { hasText: 'не подтверждено выпиской' }).count()) === unBefore + 1);
+  ok('no in-transit block', (await page.locator('text=в пути').count()) === 0);
 
   // 8. выписка Альфы (тест)
   await page.click('.nav button[data-v="statements"]');

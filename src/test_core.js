@@ -30,12 +30,30 @@ eq('diffDays', KC.diffDays('2026-11-12', '2026-11-08'), 4);
 // перевод: две парные записи, остатки
 const [o, i] = KC.makeTransfer({ from: 'alfa', to: 'cash', amount: 5000000, date: T });
 eq('transfer pair', [o.pairId === i.pairId && !!o.pairId, o.amount, i.amount], [true, -5000000, 5000000]);
-eq('transfer states', [o.bankState, i.bankState], ['pending', 'none']);
+eq('transfer states', [o.bankState, i.bankState], ['unconfirmed', 'none']);
 const bal = KC.balances([R({ wallet: 'alfa', amount: 10000000, source: 'bank' }), o, i]);
-eq('alfa balance equals bank', bal.wallets[0].balance, 10000000);
-eq('in transit', bal.inTransit, -5000000);
+eq('alfa balance includes unconfirmed transfer', bal.wallets[0].balance, 5000000);
+eq('alfa unconfirmed shown', bal.wallets[0].unconfirmed, -5000000);
+eq('no in transit for transfers', bal.inTransit, 0);
 eq('cash', bal.wallets[1].balance, 5000000);
 eq('total not distorted', bal.total, 10000000);
+// старый перевод в состоянии pending тоже входит в остаток и показан как неподтверждённый
+{
+  const old = Object.assign({}, o, { bankState: 'pending' });
+  const b2 = KC.balances([R({ wallet: 'alfa', amount: 10000000, source: 'bank' }), old, i]);
+  eq('legacy pending transfer in balance', [b2.wallets[0].balance, b2.inTransit, KC.bankStateOf(old)], [5000000, 0, 'unconfirmed']);
+}
+// переводы и корректировки не входят в отчёты и оборот, остатки сохраняют
+{
+  const adj = R({ wallet: 'alfa', amount: 123400, article: 'Корректировка остатка', project: 'Икс', date: T, source: 'import' });
+  const inc = R({ wallet: 'alfa', amount: 1000000, article: 'Продажа мебели', project: 'Икс', date: T, source: 'import' });
+  const all = [adj, inc, o, i];
+  eq('projectStats off-report', KC.projectStats(all).list.map(x => [x.project, x.income, x.expense]), [['Икс', 1000000, 0]]);
+  eq('projectFinance off-report', KC.projectFinance(all, 'Икс', []).income, 1000000);
+  eq('periodIncomes off-report', KC.periodIncomes(all, T, T).map(x => x.id), [inc.id]);
+  eq('expenseSums off-report', KC.expenseSumsByArticle(all, T, T), {});
+  eq('balance keeps adjustment', KC.balances([adj]).wallets[0].balance, 123400);
+}
 // Промос: неподтверждённое входит в остаток
 const p = R({ wallet: 'promos', amount: -4820000, date: T });
 eq('promos state', p.bankState, 'unconfirmed');
@@ -210,7 +228,7 @@ function alfaScenario() {
 {
   const samples = KC.sampleRecords(T);
   const b = KC.balances(samples);
-  eq('sample has pending in transit', b.inTransit !== 0, true);
+  eq('sample transfers not in transit', KC.balances(samples.filter(KC.isTransfer)).inTransit, 0);
   eq('sample unfilled', KC.unfilledCount(samples) >= 2, true);
   const g = KC.groupByDay(KC.filterRecords(samples, { month: '2026-11' }));
   eq('grouped days sorted desc', g.every((x, i) => i === 0 || g[i - 1].date > x.date), true);
