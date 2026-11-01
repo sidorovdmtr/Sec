@@ -1679,12 +1679,31 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   function stmScriptUrl(params) {
     var u = new URL(S.meta.stmUrl); Object.keys(params).forEach(function (k) { u.searchParams.set(k, params[k]); }); return u.toString();
   }
-  function stmFetch(params) {
+  // 1) обычный запрос; 2) если браузер его не пропустил (Safari на iPhone: «Load failed»), загрузка скриптом-вставкой (JSONP), для неё нужна версия скрипта с параметром callback
+  function stmFetchCors(params) {
     return fetch(stmScriptUrl(params), { cache: 'no-store' }).then(function (r) {
       if (!r.ok) throw new Error('Ответ скрипта: ' + r.status + '. Проверьте адрес развёртывания (…/exec) и доступ «Все»');
       return r.text();
     }).then(function (t) {
       try { return JSON.parse(t); } catch (e) { throw new Error('скрипт вернул не данные: Google, скорее всего, просит вход. Проверьте, что в развёртывании «Доступ: все», а адрес заканчивается на /exec'); }
+    });
+  }
+  var jsonpN = 0;
+  function stmFetchJsonp(params) {
+    return new Promise(function (resolve, reject) {
+      var name = '__kcStm' + (++jsonpN) + '_' + Date.now(), el = document.createElement('script'), timer;
+      function done() { clearTimeout(timer); delete window[name]; if (el.parentNode) el.parentNode.removeChild(el); }
+      window[name] = function (data) { done(); resolve(data); };
+      el.onerror = function () { done(); reject(new Error('нет ответа от скрипта. Обновите скрипт до последней версии (README, «Автозагрузка выписок»), выпустите новую версию развёртывания и проверьте, что доступ «Все»')); };
+      timer = setTimeout(function () { done(); reject(new Error('скрипт не ответил за 60 секунд')); }, 60000);
+      el.src = stmScriptUrl(Object.assign({ callback: name }, params));
+      document.head.appendChild(el);
+    });
+  }
+  function stmFetch(params) {
+    return stmFetchCors(params).catch(function (e) {
+      if (e && e.name === 'TypeError') return stmFetchJsonp(params);
+      throw e;
     }).then(function (j) {
       if (j && j.error) throw new Error(j.error === 'forbidden' ? 'неверный ключ в ссылке' : j.error === 'not_configured' ? 'скрипт не настроен (папка или ключ)' : j.error === 'not_in_folder' ? 'файл не из папки выписок' : j.error);
       return j;
