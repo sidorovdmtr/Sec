@@ -405,5 +405,59 @@ function alfaScenario() {
   eq('no duplicate decisions on re-upload', again.decisions.filter(d => d.type === 'choose').length, 0);
 }
 
+// ---- суммы в выписках: запятая как разделитель тысяч (Альфа) и десятичная запятая ----
+eq('parseMoney alfa style', ['46,061.00', '1,215.00', '156.00'].map(KC.parseMoney), [4606100, 121500, 15600]);
+eq('parseMoney ru style', ['1 215,50', '1.215,00', '12,5', '\u22125,00', '1215,5'].map(KC.parseMoney), [121550, 121500, 1250, -500, 121550]);
+// ---- выписка Альфы: шапка в две строки, даты текстом, суммы текстом ----
+{
+  const table = [['Выписка по счёту'], ['За период', 'c 30.10.2026 по 30.10.2026'],
+    ['Дата', 'Номер документа', 'Дебет', 'Кредит', 'Контрагент', '', '', '', '', '', 'Назначение платежа', 'Код дебитора', 'Тип документа'],
+    ['', '', '', '', 'Наименование', 'ИНН', 'КПП', 'Счёт', 'БИК', 'Наименование банка'],
+    ['30.10.2026', '0', '156.00', '', 'АО «Альфа-Банк»', '', '', '', '', '', 'Комиссия', '', 'Банковский ордер'],
+    ['30.10.2026', '324', '1,215.00', '', 'АО «Х»', '', '', '', '', '', 'Оплата по счету', '', 'Платежное поручение'],
+    ['30.10.2026', '325', '', '10,000.50', 'ООО «Заказчик»', '', '', '', '', '', 'Оплата заказа', '', 'Платежное поручение']];
+  const hi = KC.findHeaderRow(table), map = KC.detectColumns(table[hi]), r = KC.rowsFromTable(table, hi, map);
+  eq('alfa-like table rows', [r.rows.map(x => x.amount), r.skipped], [[-15600, -121500, 1000050], 0]);
+}
+// ---- уже подтверждённые записи без ключа выписки (из сводной таблицы) не дублируются ----
+{
+  const mk = (amount, date) => R({ wallet: 'alfa', amount, date, source: 'import', bankState: 'confirmed', article: 'Закупка материала' });
+  const recs = [mk(-15600, '2026-10-30'), mk(-121500, '2026-10-30'), mk(-121500, '2026-10-30')];
+  const rows = [{ date: '2026-10-30', amount: -15600, counterparty: 'Банк', purpose: 'Комиссия', docNo: '0' },
+    { date: '2026-10-30', amount: -121500, counterparty: 'Х', purpose: 'Оплата', docNo: '324' },
+    { date: '2026-10-30', amount: -121500, counterparty: 'Y', purpose: 'Оплата', docNo: '325' },
+    { date: '2026-10-30', amount: -50000, counterparty: 'Z', purpose: 'Новая', docNo: '326' }];
+  const res = KC.reconcile({ records: recs, wallet: 'alfa', rows });
+  eq('linked to confirmed, one new', [res.stats.matched, res.stats.added, res.patches.length, res.newRecords.length], [3, 1, 3, 1]);
+  const linked = recs.map(r => Object.assign({}, r, (res.patches.find(p => p.id === r.id) || {}).patch));
+  const again = KC.reconcile({ records: linked.concat(res.newRecords), wallet: 'alfa', rows });
+  eq('re-upload after link: no duplicates', [again.stats.duplicates, again.stats.matched, again.stats.added], [4, 0, 0]);
+  eq('linked keeps confirmed state', linked.every(r => r.bankState === 'confirmed' && r.bankKey), true);
+}
+
+// ---- выписка Альфы за 30.10.2026: все строки уже учтены, комиссия за день одной строкой = 4 комиссии по платежам ----
+{
+  const mk = (amount, desc) => R({ wallet: 'alfa', amount, date: '2026-10-30', source: 'import', bankState: 'confirmed', description: desc || '', article: desc ? 'РКО' : 'Закупка материала' });
+  const recs = [mk(-121500), mk(-1541900), mk(-840000), mk(-165500), mk(-1417300), mk(-504300),
+    mk(-3900, 'Комиссия за перевод в рублях по Системе N 324 от 30.10.2026 Согл.тариф'), mk(-3900, 'Комиссия за перевод в рублях по Системе N 321 от 30.10.2026 Согл.тариф'),
+    mk(-3900, 'Комиссия за перевод в рублях по Системе N 322 от 30.10.2026 Согл.тариф'), mk(-3900, 'Комиссия за перевод в рублях по Системе N 319 от 30.10.2026 Согл.тариф')];
+  const row = (amount, purpose, docNo) => ({ date: '2026-10-30', amount, counterparty: 'АО «Альфа-Банк»', purpose, docNo });
+  const rows = [row(-15600, 'Комиссия за переводы в валюте РФ за 2026-10-30. Согласно тарифам Банка.', '0'), row(-121500, 'Оплата по счету 1', '324'), row(-1541900, 'Оплата по счету 2', '321'),
+    row(-840000, 'Оплата по счету 3', '323'), row(-165500, 'Оплата по счету 4', '322'), row(-1417300, 'Оплата по счету 5', '320'), row(-504300, 'Оплата по счету 6', '319')];
+  const res = KC.reconcile({ records: recs, wallet: 'alfa', rows });
+  eq('alfa 30.10: nothing new, all linked', [res.stats.matched, res.stats.added, res.stats.decisions, res.newRecords.length, res.patches.length], [7, 0, 0, 0, 10]);
+  eq('alfa 30.10: commission group linked once', res.stats.commissionGroups, 1);
+  // сумма группы не сходится: ничего не склеиваем, комиссия приходит новой записью и не считается переводом
+  const broken = recs.slice(0, 9);
+  const r2 = KC.reconcile({ records: broken, wallet: 'alfa', rows: [rows[0]] });
+  eq('commission mismatch: new record, not a transfer', [r2.stats.added, r2.newRecords[0] && r2.newRecords[0].kind], [1, 'expense']);
+  // повторная загрузка после привязки
+  const linked = recs.map(r => Object.assign({}, r, (res.patches.find(p => p.id === r.id) || {}).patch));
+  const again = KC.reconcile({ records: linked, wallet: 'alfa', rows });
+  eq('alfa 30.10 re-upload: only duplicates', [again.stats.duplicates, again.stats.added, again.stats.matched], [7, 0, 0]);
+  // баланс не меняется
+  eq('balance unchanged by linking', KC.balances(linked).wallets[0].balance, KC.balances(recs).wallets[0].balance);
+}
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
