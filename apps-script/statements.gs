@@ -15,7 +15,8 @@ function setup() {
 // Показывает ссылку, которую нужно вставить в инструмент (Выписки, «Ссылка скрипта»). Ссылка секретна, как пароль.
 function showLink() {
   var url = ScriptApp.getService().getUrl();
-  Logger.log(url ? url + '?key=' + PropertiesService.getScriptProperties().getProperty('KEY') : 'Сначала опубликуйте скрипт как веб-приложение (Начать развёртывание).');
+  // из редактора getUrl() возвращает тестовый адрес /dev, браузеру нужен рабочий /exec
+  Logger.log(url ? url.replace(/\/dev$/, '/exec') + '?key=' + PropertiesService.getScriptProperties().getProperty('KEY') : 'Сначала опубликуйте скрипт как веб-приложение (Начать развёртывание).');
 }
 
 function doGet(e) {

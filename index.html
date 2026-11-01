@@ -1681,8 +1681,10 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
   function stmFetch(params) {
     return fetch(stmScriptUrl(params), { cache: 'no-store' }).then(function (r) {
-      if (!r.ok) throw new Error('Ответ скрипта: ' + r.status);
-      return r.json();
+      if (!r.ok) throw new Error('Ответ скрипта: ' + r.status + '. Проверьте адрес развёртывания (…/exec) и доступ «Все»');
+      return r.text();
+    }).then(function (t) {
+      try { return JSON.parse(t); } catch (e) { throw new Error('скрипт вернул не данные: Google, скорее всего, просит вход. Проверьте, что в развёртывании «Доступ: все», а адрес заканчивается на /exec'); }
     }).then(function (j) {
       if (j && j.error) throw new Error(j.error === 'forbidden' ? 'неверный ключ в ссылке' : j.error === 'not_configured' ? 'скрипт не настроен (папка или ключ)' : j.error === 'not_in_folder' ? 'файл не из папки выписок' : j.error);
       return j;
@@ -1741,13 +1743,14 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     var u; try { u = new URL(v); } catch (e) { return 'Не нашёл ссылку: нужна ссылка, которая начинается с https://script.google.com/macros/s/'; }
     if (u.hostname !== 'script.google.com') return 'Адрес должен начинаться с https://script.google.com/. У вас: ' + u.hostname;
     if (u.pathname.indexOf('/macros/') < 0) return 'В ссылке нет /macros/s/…/exec. Скопируйте ссылку из журнала выполнения функции showLink';
-    if (/\/dev$/.test(u.pathname)) return 'Ссылка заканчивается на /dev (тестовый адрес). Нужна /exec: сделайте «Новое развёртывание» и снова запустите showLink';
     if (!/\/exec$/.test(u.pathname)) return 'Ссылка должна заканчиваться на /exec, а у вас: …' + u.pathname.slice(-12);
     if (!u.searchParams.get('key')) return 'В ссылке нет ?key=… (ключа). Запустите showLink после развёртывания и скопируйте ссылку целиком';
     return '';
   }
   function saveStmUrl() {
     var raw = ($('#stm-url') || {}).value || '', v = extractStmUrl(raw);
+    // функция showLink из редактора скрипта печатает тестовый адрес /dev; для браузера нужен рабочий /exec
+    v = v.replace(/\/dev(\?|$)/, '/exec$1');
     if (v) { var err = checkStmUrl(v); if (err) return toast(err); }
     else if (raw.trim()) return toast(checkStmUrl(raw.trim()));
     S.meta.stmUrl = v; persist(); render(); toast(v ? 'Ссылка скрипта сохранена' : 'Ссылка скрипта удалена');
