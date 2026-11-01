@@ -635,6 +635,28 @@
     return out;
   }
 
+
+  /* ---------- автозагрузка выписок из папки на Диске ---------- */
+  // кошелёк по имени файла: Промос — «Промос» в названии; Альфа — файл «Выписка…» или номер счёта; иначе не определён
+  function statementWalletByName(name) {
+    var n = name || '';
+    if (/промос/i.test(n)) return 'promos';
+    if (/^выписка/i.test(n) || /40702810626180001762/.test(n) || /альфа/i.test(n)) return 'alfa';
+    return '';
+  }
+  function statementFileKey(f) { return [f.id, f.size, f.modified].join('|'); }
+  // files: список из скрипта {id,name,size,modified}; processed: карта ключ → {…}
+  function newStatementFiles(files, processed) {
+    var out = { fresh: [], unknown: [], seen: 0 };
+    (files || []).slice().sort(function (a, b) { return a.modified < b.modified ? -1 : a.modified > b.modified ? 1 : 0; }).forEach(function (f) {
+      if ((processed || {})[statementFileKey(f)]) { out.seen++; return; }
+      var w = statementWalletByName(f.name);
+      if (w) out.fresh.push(Object.assign({ wallet: w, key: statementFileKey(f) }, f)); else out.unknown.push(f);
+    });
+    return out;
+  }
+  function mergeProcessed(a, b) { return Object.assign({}, b || {}, a || {}); }
+
   /* ---------- копии ---------- */
   var BACKUP_VERSION = 1;
   function backupObject(state) {
@@ -706,7 +728,7 @@
     WALLETS: WALLETS, wallet: wallet, parseMoney: parseMoney, formatMoney: formatMoney,
     isoDate: isoDate, today: today, diffDays: diffDays, addDays: addDays, monthKey: monthKey, monthLabel: monthLabel, shiftMonth: shiftMonth,
     dayLabel: dayLabel, shortDate: shortDate, parseDateInput: parseDateInput, validDate: validDate,
-    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
+    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
     missingFields: missingFields, unfilledCount: unfilledCount, unpairedTransfers: unpairedTransfers, defaultBankState: defaultBankState,
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
