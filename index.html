@@ -1263,7 +1263,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     var cfg = S.meta.stmUrl ? '<div class="small mu">Ссылка скрипта сохранена. <button type="button" class="linkbtn" data-act="stmurlclear">Удалить</button></div>' :
       '<div class="field"><label>Ссылка скрипта выписок (как пароль, никому не показывайте)</label><input class="input" id="stm-url" placeholder="https://script.google.com/macros/s/…/exec?key=…" autocomplete="off"></div><button type="button" class="btn" data-act="stmurlsave">Сохранить ссылку</button>';
     return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold" style="font-size:15px">Автозагрузка из папки на Диске</div><div class="small mu">' + last + 'Новые файлы из папки читаются и сверяются, уже прочитанные пропускаются.</div>' +
-      '<button type="button" class="btn main" data-act="stmsync"' + (S.stmBusy ? ' disabled' : '') + '>' + (S.stmBusy ? 'Проверяю…' : 'Синхронизировать выписки') + '</button><div class="small" id="stmstatus">' + esc(S.stmMsg || '') + '</div>' + cfg + '</div>';
+      '<button type="button" class="btn main" data-act="stmsync"' + (S.stmBusy ? ' disabled' : '') + '>' + (S.stmBusy ? 'Проверяю…' : 'Синхронизировать выписки') + '</button><div class="small" id="stmstatus" style="white-space:pre-wrap">' + esc(S.stmMsg || '') + '</div>' + (S.meta.stmUrl ? '<button type="button" class="btn" data-act="stmdiag"' + (S.stmBusy ? ' disabled' : '') + '>Проверить связь со скриптом</button>' : '') + cfg + '</div>';
   }
   function stmCard(id, desc) {
     var last = null; S.meta.statements.forEach(function (s) { if (s.wallet === id) last = s; });
@@ -1702,6 +1702,35 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
       document.head.appendChild(el);
     });
   }
+  // диагностика связи со скриптом: что именно происходит на этом устройстве (без ссылки и ключа в тексте)
+  function stmDiag() {
+    if (S.stmBusy) return;
+    if (!S.meta.stmUrl) return toast('Сначала сохраните ссылку скрипта');
+    S.stmBusy = true; var lines = [], t0;
+    var u; try { u = new URL(S.meta.stmUrl); } catch (e) { S.stmBusy = false; return toast('Сохранённая ссылка не читается'); }
+    lines.push('Адрес: ' + u.hostname + '/…' + u.pathname.slice(-6) + ', ключ ' + ((u.searchParams.get('key') || '').length) + ' симв.');
+    lines.push('Режим: ' + ((window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone ? 'значок «Домой»' : 'вкладка браузера') + ', сервис-воркер: ' + (navigator.serviceWorker && navigator.serviceWorker.controller ? 'активен' : 'нет') + ', связь: ' + (navigator.onLine ? 'есть' : 'нет'));
+    function step(label, fn) {
+      var s = Date.now();
+      return fn().then(function (r) { lines.push(label + ': ответ получен за ' + (Date.now() - s) + ' мс' + (r && r.ok ? ', файлов ' + (r.files ? r.files.length : '?') : (r && r.error ? ', ошибка скрипта: ' + r.error : ''))); }, function (e) { lines.push(label + ': ' + (e && e.name ? e.name + ': ' : '') + (e && e.message ? e.message.slice(0, 80) : 'ошибка') + ' (' + (Date.now() - s) + ' мс)'); });
+    }
+    function jsonpProbe(opts) {
+      return new Promise(function (resolve, reject) {
+        var name = '__kcDiag' + (++jsonpN), el = document.createElement('script'), timer, got = false;
+        window[name] = function (d) { got = true; cleanup(); resolve(d); };
+        function cleanup() { clearTimeout(timer); delete window[name]; if (el.parentNode) el.parentNode.removeChild(el); }
+        el.onerror = function () { cleanup(); reject(new Error('событие error: скрипт не загрузился (блокировка или сеть)')); };
+        el.onload = function () { if (!got) { cleanup(); reject(new Error('скрипт загрузился, но функция не вызвана (ответ не JavaScript)')); } };
+        if (opts.noref) el.referrerPolicy = 'no-referrer';
+        timer = setTimeout(function () { cleanup(); reject(new Error('нет ответа за 20 секунд')); }, 20000);
+        el.src = stmScriptUrl({ action: 'list', callback: name }); document.head.appendChild(el);
+      });
+    }
+    step('Обычный запрос', function () { return stmFetchCors({ action: 'list' }); })
+      .then(function () { return step('Вставка скриптом', function () { return jsonpProbe({}); }); })
+      .then(function () { return step('Вставка без отправки адреса сайта', function () { return jsonpProbe({ noref: true }); }); })
+      .then(function () { S.stmBusy = false; S.stmMsg = lines.join('\n'); render(); });
+  }
   function stmFetch(params) {
     return stmFetchCors(params).catch(function (e) {
       if (e && e.name === 'TypeError') return stmFetchJsonp(params);
@@ -1919,6 +1948,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (a === 'seed') { var hv = {}; S.meta.articles.forEach(function (x) { hv[x.name.toLowerCase()] = 1; }); S.meta.articles = S.meta.articles.concat(KC.sampleCatalog().filter(function (x) { return !hv[x.name.toLowerCase()]; })); var smp = KC.sampleRecords(); commit({ newRecords: smp }, 'import', 'Добавлены тестовые данные (' + smp.length + ' записей)'); render(); return toast('Добавлены выдуманные тестовые данные'); }
     if (a === 'resetTest') return resetTest();
     if (a === 'stmsync') return syncStatements();
+    if (a === 'stmdiag') return stmDiag();
     if (a === 'stmurlsave') return saveStmUrl();
     if (a === 'stmurlclear') { S.meta.stmUrl = ''; S.meta.stmUrlAt = KC.nowISO(); persist(); render(); toast('Ссылка скрипта удалена'); return; }
     if (a === 'backup') return doBackupJson();

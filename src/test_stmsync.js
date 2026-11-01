@@ -98,6 +98,12 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   // 6. состояние переживает перезагрузку
   await page.waitForTimeout(150); await page.reload(); await ready();
   ok('url and files persist', await page.evaluate(() => !!KCApp.S.meta.stmUrl && Object.keys(KCApp.S.meta.stmFiles).length >= 2));
+  // диагностика связи: отчёт по обоим способам, без ссылки и ключа
+  await page.click('.nav button[data-v="statements"]');
+  await page.click('button[data-act="stmdiag"]'); await page.waitForTimeout(1200);
+  const diag = await page.locator('#stmstatus').innerText();
+  ok('diag reports both transports', /Обычный запрос: ответ получен/.test(diag) && /Вставка скриптом: ответ получен/.test(diag) && /без отправки адреса/.test(diag), diag);
+  ok('diag does not leak key', diag.indexOf('secretkey123') < 0 && diag.indexOf('key=') < 0, diag);
   // 7. Safari блокирует обычный запрос: инструмент переходит на загрузку скриптом-вставкой и всё равно читает выписку
   blockFetch = true;
   folder.push({ id: 'f4', name: 'Выписка_40702810626180001762_01.11.2026.xlsx', size: 7300, modified: '2026-11-04T09:00:00.000Z', buf: ALFA });
