@@ -4,7 +4,7 @@
 
 ## Что это
 
-Веб-инструмент учёта денег вместо Финолога (подписка до ~21.11.2026). Один файл `index.html` без сборщика. Данные хранятся локально в браузере (localStorage), при подключённом Firebase синхронизируются с Firestore. Тестовая и рабочая базы раздельные.
+Веб-инструмент учёта денег вместо Финолога (подписка до ~21.11.2026). Один файл `index.html` без сборщика. Данные хранятся локально в браузере (IndexedDB; если недоступен, localStorage: на iPhone там около 5 МБ на сайт, этого не хватало для рабочей и тестовой баз вместе), при подключённом Firebase синхронизируются с Firestore. Тестовая и рабочая базы раздельные.
 
 ## Состав
 
@@ -23,6 +23,7 @@ node test_core.js
 python3 build.py
 NODE_PATH=<путь к node_modules с playwright> node test_ui.js dist/deploy/index.html
 NODE_PATH=<путь к node_modules с playwright> node test_sync.js
+NODE_PATH=<путь к node_modules с playwright> node test_storage.js dist/deploy/index.html
 ```
 
 Тесты интерфейса грузят страницу из файла и блокируют внешние адреса, поэтому библиотека xlsx (SheetJS с cdnjs) и шрифты в тестах недоступны.

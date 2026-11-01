@@ -839,10 +839,69 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   var money = KC.formatMoney;
 
   /* ---------- хранилище (локально; всегда работает без связи) ---------- */
-  var mem = {}, storageOk = true;
-  function lsGet(k) { try { var v = localStorage.getItem(k); return v == null ? (k in mem ? mem[k] : null) : v; } catch (e) { return k in mem ? mem[k] : null; } }
-  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { storageOk = false; mem[k] = v; } }
-  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} delete mem[k]; }
+  // Хранилище. Большие данные (записи, журнал, решения, настройки базы) лежат в IndexedDB: в localStorage на iPhone около 5 МБ на сайт,
+  // а рабочая и тестовая базы вместе не помещались. Если IndexedDB недоступен, работаем через localStorage, как раньше.
+  var mem = {}, storageOk = true, idbOn = false, idbDb = null, idbQueue = {}, idbTimer = null;
+  function isBig(k) { return /^kc\.(test|prod)\.(records|log|decisions|meta)$/.test(k); }
+  function lsGet(k) {
+    if (idbOn && isBig(k)) return k in mem ? mem[k] : null;
+    try { var v = localStorage.getItem(k); return v == null ? (k in mem ? mem[k] : null) : v; } catch (e) { return k in mem ? mem[k] : null; }
+  }
+  function lsSet(k, v) {
+    if (idbOn && isBig(k)) { mem[k] = v; idbQueue[k] = v; idbSchedule(); return true; }
+    try { localStorage.setItem(k, v); return true; } catch (e) { storageOk = false; mem[k] = v; return false; }
+  }
+  function lsDel(k) {
+    if (idbOn && isBig(k)) { idbQueue[k] = null; idbSchedule(); }
+    try { localStorage.removeItem(k); } catch (e) {} delete mem[k];
+  }
+  function idbSchedule() { if (!idbTimer) idbTimer = setTimeout(idbFlush, 0); }
+  function idbFlush() {
+    if (idbTimer) { clearTimeout(idbTimer); idbTimer = null; }
+    var keys = Object.keys(idbQueue); if (!keys.length || !idbDb) return;
+    var batch = idbQueue; idbQueue = {};
+    try {
+      var tx = idbDb.transaction('kv', 'readwrite'), st = tx.objectStore('kv');
+      keys.forEach(function (k) { if (batch[k] === null) st.delete(k); else st.put(batch[k], k); });
+      tx.oncomplete = function () { if (!storageOk) { storageOk = true; render(); } };
+      tx.onerror = tx.onabort = function () { storageOk = false; Object.keys(batch).forEach(function (k) { if (!(k in idbQueue) && batch[k] !== null) idbQueue[k] = batch[k]; }); render(); };
+    } catch (e) { storageOk = false; }
+  }
+  function storageInit() {
+    return new Promise(function (resolve) {
+      var done = false, finish = function () { if (!done) { done = true; resolve(); } };
+      try {
+        if (!window.indexedDB) return finish();
+        var req = indexedDB.open('kubcrafter-money', 1);
+        req.onupgradeneeded = function () { req.result.createObjectStore('kv'); };
+        req.onerror = req.onblocked = function () { finish(); };
+        req.onsuccess = function () {
+          var db = req.result, got = {}, tx = db.transaction('kv', 'readonly'), cur = tx.objectStore('kv').openCursor();
+          cur.onsuccess = function () { var c = cur.result; if (c) { got[c.key] = c.value; c.continue(); } };
+          tx.onerror = tx.onabort = function () { finish(); };
+          tx.oncomplete = function () {
+            idbDb = db; idbOn = true; Object.keys(got).forEach(function (k) { mem[k] = got[k]; });
+            // перенос из localStorage: старые данные удаляем оттуда только после подтверждённой записи в IndexedDB
+            var moved = [];
+            try {
+              for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (isBig(k) && !(k in got)) moved.push(k); }
+            } catch (e) {}
+            if (!moved.length) return finish();
+            var data = {}; moved.forEach(function (k) { data[k] = localStorage.getItem(k); });
+            try {
+              var tx2 = db.transaction('kv', 'readwrite'), st = tx2.objectStore('kv');
+              moved.forEach(function (k) { st.put(data[k], k); });
+              tx2.oncomplete = function () { moved.forEach(function (k) { mem[k] = data[k]; try { localStorage.removeItem(k); } catch (e) {} }); finish(); };
+              tx2.onerror = tx2.onabort = function () { idbOn = false; finish(); };
+            } catch (e) { idbOn = false; finish(); }
+          };
+        };
+      } catch (e) { finish(); }
+      setTimeout(finish, 4000);
+    });
+  }
+  window.addEventListener('pagehide', idbFlush);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') idbFlush(); });
   function jparse(s, d) { try { var v = JSON.parse(s); return v == null ? d : v; } catch (e) { return d; } }
 
   var S = {
@@ -860,6 +919,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     S.decisions = jparse(lsGet(pref() + 'decisions'), []);
     var meta = jparse(lsGet(pref() + 'meta'), {});
     S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', projects: meta.projects || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
+    if (!S.records.length) S.meta.lastPull = ''; // на устройстве записей нет: берём всё из облака
     ensureCatalogNow(true); persist();
   }
   // добавляет в справочник недостающие статьи (системные и встреченные в записях); возвращает число добавленных несистемных
@@ -874,8 +934,11 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     return added.filter(function (x) { return !x.system; }).length;
   }
   function persist(noSync) {
-    lsSet(pref() + 'records', JSON.stringify(S.records)); lsSet(pref() + 'log', JSON.stringify(S.log));
-    lsSet(pref() + 'decisions', JSON.stringify(S.decisions)); lsSet(pref() + 'meta', JSON.stringify(S.meta));
+    var ok = lsSet(pref() + 'records', JSON.stringify(S.records));
+    lsSet(pref() + 'log', JSON.stringify(S.log)); lsSet(pref() + 'decisions', JSON.stringify(S.decisions));
+    // записи не сохранились на устройстве: метку получения из облака сбрасываем, чтобы при следующем запуске они подтянулись заново
+    lsSet(pref() + 'meta', JSON.stringify(ok ? S.meta : Object.assign({}, S.meta, { lastPull: '' })));
+    idbFlush(); // запись в IndexedDB стартует сразу, без задержки
     if (!noSync) scheduleSync();
   }
   function addLog(action, summary, recId) {
@@ -1089,7 +1152,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     var out = '';
     if (S.mode === 'test') out += '<div class="banner info">ТЕСТОВАЯ БАЗА: данные выдуманы, базу можно сбросить в разделе «Копии»</div>';
     if (!S.online) out += '<div class="banner warn">' + svg(S.online ? 'plus' : 'wifi', 14) + ' Нет связи: записи сохраняются в телефоне и отправятся позже</div>';
-    if (!storageOk) out += '<div class="banner warn">Память браузера недоступна: данные пропадут при закрытии страницы</div>';
+    if (!storageOk) out += '<div class="banner warn">Память браузера переполнена или недоступна: изменения на этом устройстве могут пропасть при закрытии страницы</div>';
     if (S.records.length && (days === null || days >= 7)) out += '<div class="banner warn">' + (days === null ? 'Копия ещё не делалась.' : 'Копия не делалась ' + days + ' дн.') + ' <a href="#" data-act="gocopies" style="color:inherit;font-weight:600">Сделать копию</a></div>';
     var monthRow = S.project
       ? '<div class="row gap8"><span class="pill">Проект: ' + esc(S.project === '__none__' ? 'без проекта' : S.project) + '</span><button type="button" class="chip" data-act="clearproject">Сбросить</button></div>'
@@ -1718,6 +1781,9 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   function onFocusIn(e) { var id = e.target && e.target.id; if (id && (id === 'f-cp' || id === 'f-art' || id === 'f-proj')) showSug(id); }
 
   function init() {
+    storageInit().then(start);
+  }
+  function start() {
     load();
     document.addEventListener('click', onClick);
     document.addEventListener('input', onInput);
