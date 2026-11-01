@@ -53,7 +53,8 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   ok('bad url rejected', (await page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
   ok('bad host explained', (await toastTxt()).indexOf('script.google.com') >= 0, await toastTxt());
   await page.fill('#stm-url', 'https://script.google.com/macros/s/TEST/dev?key=abc'); await page.click('button[data-act="stmurlsave"]');
-  ok('dev url explained', (await toastTxt()).indexOf('/dev') >= 0 && (await page.evaluate(() => KCApp.S.meta.stmUrl)) === '', await toastTxt());
+  ok('dev url converted to exec', (await page.evaluate(() => KCApp.S.meta.stmUrl)) === 'https://script.google.com/macros/s/TEST/exec?key=abc', await page.evaluate(() => KCApp.S.meta.stmUrl));
+  await page.click('button[data-act="stmurlclear"]');
   await page.fill('#stm-url', 'https://script.google.com/macros/s/TEST/exec'); await page.click('button[data-act="stmurlsave"]');
   ok('missing key explained', (await toastTxt()).indexOf('key=') >= 0 && (await page.evaluate(() => KCApp.S.meta.stmUrl)) === '', await toastTxt());
   // вставка из журнала выполнения: время, слово «Информация», кавычки и неразрывный пробел вокруг ссылки
