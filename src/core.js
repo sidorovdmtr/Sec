@@ -71,6 +71,11 @@
   function uid() { return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
   function nowISO() { return new Date().toISOString(); }
   function isTransfer(r) { return r.kind === 'transfer_out' || r.kind === 'transfer_in'; }
+  // вне отчётов и оборота: переводы и корректировки остатка (в остатки кошельков входят)
+  var ADJUST_ARTICLE = 'корректировка остатка';
+  function isOffReport(r) { return isTransfer(r) || (r.article || '').trim().toLowerCase() === ADJUST_ARTICLE; }
+  // перевод, ждущий выписку, всегда в остатке: старое состояние pending у перевода читаем как unconfirmed
+  function bankStateOf(r) { return r.bankState === 'pending' && isTransfer(r) ? 'unconfirmed' : r.bankState; }
   function typeOf(r) { return isTransfer(r) ? 'transfer' : (r.amount < 0 ? 'expense' : 'income'); }
 
   // статус банка: none (наличные), pending (ждёт выписку, в остаток не входит), unconfirmed (Промос, в остатке),
@@ -107,6 +112,7 @@
     var common = { date: d, planned: !!f.planned, description: f.description || '', source: f.source || 'phone', pairId: pairId };
     var out = newRecord(Object.assign({ kind: 'transfer_out', wallet: f.from, amount: -abs }, common));
     var inn = newRecord(Object.assign({ kind: 'transfer_in', wallet: f.to, amount: abs }, common));
+    [out, inn].forEach(function (r) { var w = wallet(r.wallet); if (w && w.bank && r.source !== 'bank' && r.source !== 'import') r.bankState = 'unconfirmed'; });
     return [out, inn];
   }
   function validateTransfer(f) {
@@ -126,7 +132,9 @@
     return m;
   }
   function unfilledCount(records) { var n = 0; records.forEach(function (r) { if (!r.deleted && missingFields(r).length) n++; }); return n; }
-  function unpairedTransfers(records) { return records.filter(function (r) { return !r.deleted && isTransfer(r) && !r.pairId; }); }
+  // у части импортированных переводов в колонке пары стоит текст «пары не найдено»: это не номер пары
+  function hasPair(r) { return !!r.pairId && r.pairId !== 'пары не найдено'; }
+  function unpairedTransfers(records) { return records.filter(function (r) { return !r.deleted && isTransfer(r) && !hasPair(r); }); }
 
   /* ---------- остатки ---------- */
   function balances(records) {
@@ -134,9 +142,10 @@
     records.forEach(function (r) {
       if (r.deleted || r.planned) return;
       var w = wallet(r.wallet), a = by[r.wallet]; if (!w || !a) return;
-      if (w.bank && !w.ledger && r.bankState === 'pending') { a.inTransit += r.amount; return; }
+      var st = bankStateOf(r);
+      if (w.bank && !w.ledger && st === 'pending') { a.inTransit += r.amount; return; }
       a.balance += r.amount;
-      if (w.ledger && (r.bankState === 'unconfirmed' || r.bankState === 'absent')) a.unconfirmed += r.amount;
+      if (w.bank && (st === 'unconfirmed' || st === 'absent')) a.unconfirmed += r.amount;
     });
     var list = WALLETS.map(function (w) { return by[w.id]; });
     var total = 0, transit = 0;
@@ -223,7 +232,7 @@
   function projectStats(records) {
     var map = {};
     records.forEach(function (r) {
-      if (r.deleted || r.planned || isTransfer(r)) return;
+      if (r.deleted || r.planned || isOffReport(r)) return;
       var key = r.project || '', m = map[key] || (map[key] = { project: key, income: 0, expense: 0 });
       if (r.amount > 0) m.income += r.amount; else m.expense += -r.amount;
     });
@@ -354,7 +363,7 @@
   function projectFinance(records, project, fixedArticles) {
     var fa = fixedArticles || [], inc = 0, exp = 0, own = 0, by = {}, first = '', last = '';
     records.forEach(function (r) {
-      if (r.deleted || r.planned || isTransfer(r) || (r.project || '') !== project) return;
+      if (r.deleted || r.planned || isOffReport(r) || (r.project || '') !== project) return;
       if (r.amount > 0) { inc += r.amount; if (!first || r.date < first) first = r.date; if (!last || r.date > last) last = r.date; }
       else if (fa.indexOf(r.article) >= 0) own += -r.amount;
       else { exp += -r.amount; var k = r.article || 'Статья не указана'; by[k] = (by[k] || 0) + (-r.amount); }
@@ -368,7 +377,7 @@
     var own = 0, all = 0, pool = 0, poolCount = 0, orders = {}, unas = 0, unasCount = 0, sel = null;
     if (o.incomeIds) { sel = {}; o.incomeIds.forEach(function (id) { sel[id] = 1; }); }
     records.forEach(function (r) {
-      if (r.deleted || r.planned || isTransfer(r) || r.date < from || r.date > to) return;
+      if (r.deleted || r.planned || isOffReport(r) || r.date < from || r.date > to) return;
       if (r.amount > 0) {
         if (sel) { if (sel[r.id]) { all += r.amount; if (r.project) orders[r.project] = 1; if (r.project === project) own += r.amount; } }
         else if (r.project) { all += r.amount; orders[r.project] = 1; if (r.project === project) own += r.amount; }
@@ -393,11 +402,11 @@
   }
   // поступления периода для ручного отбора: по умолчанию отмечены те, у которых есть проект
   function periodIncomes(records, from, to) {
-    return records.filter(function (r) { return !r.deleted && !r.planned && !isTransfer(r) && r.amount > 0 && r.date >= from && r.date <= to; })
+    return records.filter(function (r) { return !r.deleted && !r.planned && !isOffReport(r) && r.amount > 0 && r.date >= from && r.date <= to; })
       .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
   }
   function expenseSumsByArticle(records, from, to) {
-    var m = {}; records.forEach(function (r) { if (r.deleted || r.planned || isTransfer(r) || r.amount >= 0 || r.date < from || r.date > to) return; var k = r.article || ''; m[k] = (m[k] || 0) + (-r.amount); });
+    var m = {}; records.forEach(function (r) { if (r.deleted || r.planned || isOffReport(r) || r.amount >= 0 || r.date < from || r.date > to) return; var k = r.article || ''; m[k] = (m[k] || 0) + (-r.amount); });
     return m;
   }
   // статьи, похожие по названию на постоянные: аренда, зарплата, интернет, СММ, содержание, сервисы
@@ -664,7 +673,7 @@
     WALLETS: WALLETS, wallet: wallet, parseMoney: parseMoney, formatMoney: formatMoney,
     isoDate: isoDate, today: today, diffDays: diffDays, addDays: addDays, monthKey: monthKey, monthLabel: monthLabel, shiftMonth: shiftMonth,
     dayLabel: dayLabel, shortDate: shortDate, parseDateInput: parseDateInput, validDate: validDate,
-    uid: uid, nowISO: nowISO, isTransfer: isTransfer, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
+    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
     missingFields: missingFields, unfilledCount: unfilledCount, unpairedTransfers: unpairedTransfers, defaultBankState: defaultBankState,
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,

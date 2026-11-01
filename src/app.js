@@ -176,29 +176,20 @@
   function filterOpts() { return { month: S.project ? '' : S.month, type: S.type, query: S.query, project: S.project, unfilled: S.unfilled }; }
   function transferText(r) {
     var other = null;
-    if (r.pairId) for (var i = 0; i < S.records.length; i++) { var x = S.records[i]; if (x.pairId === r.pairId && x.id !== r.id && !x.deleted) { other = x; break; } }
+    if (KC.hasPair(r)) for (var i = 0; i < S.records.length; i++) { var x = S.records[i]; if (x.pairId === r.pairId && x.id !== r.id && !x.deleted) { other = x; break; } }
     var out = r.kind === 'transfer_out' ? r : other, inn = r.kind === 'transfer_in' ? r : other;
     if (out && inn) return wname(out.wallet) + ' → ' + wname(inn.wallet);
     return r.kind === 'transfer_out' ? wname(r.wallet) + ' → ?' : '? → ' + wname(r.wallet);
   }
-  function collapsePairs(list) {
-    var seen = {}, ids = {}; list.forEach(function (r) { ids[r.id] = 1; });
-    return list.filter(function (r) {
-      if (!KC.isTransfer(r) || !r.pairId) return true;
-      var other = null; for (var i = 0; i < list.length; i++) if (list[i].pairId === r.pairId && list[i].id !== r.id) { other = list[i]; break; }
-      if (!other) return true;
-      if (seen[r.pairId]) return false; seen[r.pairId] = 1;
-      return r.kind === 'transfer_out' ? true : (other.kind === 'transfer_out' ? false : true);
-    });
-  }
   function pills(r) {
     var p = [];
     if (r.planned) p.push('<span class="pill">план</span>');
-    if (KC.isTransfer(r)) { if (!r.pairId) p.push('<span class="pill warn">нет пары</span>'); }
+    if (KC.isTransfer(r)) { p.push('<span class="pill">перевод</span>'); if (!KC.hasPair(r)) p.push('<span class="pill warn">нет пары</span>'); }
     var w = KC.wallet(r.wallet);
     if (w && w.bank) {
-      if (r.bankState === 'pending') p.push('<span class="pill warn">ожидает выписки</span>');
-      else if (r.bankState === 'unconfirmed') p.push('<span class="pill warn">не подтверждено выпиской</span>');
+      var st = KC.bankStateOf(r);
+      if (st === 'pending') p.push('<span class="pill warn">ожидает выписки</span>');
+      else if (st === 'unconfirmed') p.push('<span class="pill warn">не подтверждено выпиской</span>');
       else if (r.bankState === 'absent') p.push('<span class="pill ' + (r.absentAck ? '' : 'bad') + '">нет в выписке</span>');
     }
     var miss = KC.missingFields(r);
@@ -222,7 +213,7 @@
     return '<button type="button" class="op row-op" data-act="edit" data-id="' + esc(r.id) + '">' + phone + '<div class="t num m-only ' + cls + '">' + amt + '</div>' + desk + '</button>';
   }
   function listHtml() {
-    var all = KC.filterRecords(S.records, filterOpts()), list = collapsePairs(all), t = KC.today();
+    var list = KC.filterRecords(S.records, filterOpts()), t = KC.today();
     if (!list.length) return '<div class="glass mu" style="padding:18px;text-align:center">' + (S.records.length ? 'Ничего не найдено' : 'Пока пусто') + '</div>';
     var head = '<div class="thead d-only"><div>Дата</div><div class="r">Сумма</div><div>Детали</div><div>Контрагент</div><div>Кошелёк</div></div>';
     return '<div class="tbl">' + head + KC.groupByDay(list).map(function (g) {
@@ -239,7 +230,7 @@
       var name = esc(w.name) + (w.note ? ' <span class="tiny mu">(' + esc(w.note) + ')</span>' : '');
       return '<div class="wallet"><div class="row between"><span>' + name + '</span><span class="bold num">' + money(w.balance) + '</span></div><div class="track"><div class="fill" style="width:' + share + '%"></div></div>' + extra + '</div>';
     }).join('');
-    var transit = b.inTransit ? '<div class="row between tiny mu"><span>в пути (ждут выписку)</span><span class="num">' + money(b.inTransit, { sign: true }) + '</span></div>' : '';
+    var transit = b.inTransit ? '<div class="row between tiny mu"><span>внесено без подтверждения банка, не в остатке</span><span class="num">' + money(b.inTransit, { sign: true }) + '</span></div>' : '';
     var hidden = b.wallets.filter(function (w) { return w.hidden && (w.balance || w.inTransit); }).map(function (w) { return '<div class="row between tiny mu"><span>' + esc(w.name) + ' (вне итога)</span><span class="num">' + money(w.balance) + '</span></div>'; }).join('');
     return '<div class="glass" style="padding:14px"><div class="row between"><div><div class="small mu">Всего по кошелькам</div><div class="num b7" style="font-size:30px;letter-spacing:-.5px" id="total">' + money(b.total) + '</div></div><button type="button" class="iconbtn" data-act="walletstoggle" aria-label="' + (S.walletsOpen ? 'Свернуть кошельки' : 'Показать кошельки') + '">' + svg(S.walletsOpen ? 'up' : 'down') + '</button></div>' +
       (S.walletsOpen ? '<div style="display:flex;flex-direction:column;gap:10px;margin-top:6px;font-size:14px">' + rows + transit + hidden + '</div>' : '') + '</div>';
@@ -253,7 +244,7 @@
   function dayBars() {
     var key = S.month || KC.monthKey(KC.today()), p = key.split('-'), days = new Date(+p[0], +p[1], 0).getDate(), inc = [], exp = [], max = 1, i;
     for (i = 0; i <= days; i++) { inc.push(0); exp.push(0); }
-    S.records.forEach(function (r) { if (r.deleted || r.planned || KC.isTransfer(r) || KC.monthKey(r.date) !== key) return; var d = +r.date.slice(8, 10); if (r.amount > 0) inc[d] += r.amount; else exp[d] += -r.amount; });
+    S.records.forEach(function (r) { if (r.deleted || r.planned || KC.isOffReport(r) || KC.monthKey(r.date) !== key) return; var d = +r.date.slice(8, 10); if (r.amount > 0) inc[d] += r.amount; else exp[d] += -r.amount; });
     for (i = 1; i <= days; i++) max = Math.max(max, inc[i], exp[i]);
     var w = 600 / days, bars = '';
     for (i = 1; i <= days; i++) { var x = (i - 1) * w, hi = inc[i] / max * 120, he = exp[i] / max * 120, bw = Math.max(2, w / 2 - 2);
@@ -577,7 +568,7 @@
   function deleteRec(id) {
     var rec = byId(id); if (!rec) return;
     var ids = [id];
-    if (rec.pairId) S.records.forEach(function (x) { if (x.pairId === rec.pairId && x.id !== id && !x.deleted) ids.push(x.id); });
+    if (KC.hasPair(rec)) S.records.forEach(function (x) { if (x.pairId === rec.pairId && x.id !== id && !x.deleted) ids.push(x.id); });
     commit({ patches: ids.map(function (i) { return { id: i, patch: { deleted: true } }; }) }, 'delete', 'Удалена операция ' + money(rec.amount) + (ids.length > 1 ? ' (перевод, обе записи)' : ''), id);
     closeForm(); render();
     toast('Удалено', 'Отменить', function () { commit({ patches: ids.map(function (i) { return { id: i, patch: { deleted: false } }; }) }, 'restore', 'Восстановлена операция', id); render(); });
