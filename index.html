@@ -1732,9 +1732,24 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     });
   }
   function setStmStatus(t) { S.stmMsg = t; var el = $('#stmstatus'); if (el) el.textContent = t; }
+  // из вставленного текста берём саму ссылку (в журнале Apps Script перед ней время и слово «Информация», на iPhone бывают лишние пробелы и кавычки)
+  function extractStmUrl(raw) {
+    var t = String(raw || '').replace(/[\u00A0\u200B\u2028\u2029]/g, ' ').replace(/[«»“”"']/g, ' ');
+    var m = /https?:\/\/\S+/.exec(t); return m ? m[0].replace(/[.,;)]+$/, '') : '';
+  }
+  function checkStmUrl(v) {
+    var u; try { u = new URL(v); } catch (e) { return 'Не нашёл ссылку: нужна ссылка, которая начинается с https://script.google.com/macros/s/'; }
+    if (u.hostname !== 'script.google.com') return 'Адрес должен начинаться с https://script.google.com/. У вас: ' + u.hostname;
+    if (u.pathname.indexOf('/macros/') < 0) return 'В ссылке нет /macros/s/…/exec. Скопируйте ссылку из журнала выполнения функции showLink';
+    if (/\/dev$/.test(u.pathname)) return 'Ссылка заканчивается на /dev (тестовый адрес). Нужна /exec: сделайте «Новое развёртывание» и снова запустите showLink';
+    if (!/\/exec$/.test(u.pathname)) return 'Ссылка должна заканчиваться на /exec, а у вас: …' + u.pathname.slice(-12);
+    if (!u.searchParams.get('key')) return 'В ссылке нет ?key=… (ключа). Запустите showLink после развёртывания и скопируйте ссылку целиком';
+    return '';
+  }
   function saveStmUrl() {
-    var v = ($('#stm-url') || {}).value || ''; v = v.trim();
-    if (v) { try { var u = new URL(v); if (u.hostname !== 'script.google.com' || !u.searchParams.get('key')) throw new Error('x'); } catch (e) { return toast('Нужна ссылка вида https://script.google.com/macros/s/…/exec?key=…'); } }
+    var raw = ($('#stm-url') || {}).value || '', v = extractStmUrl(raw);
+    if (v) { var err = checkStmUrl(v); if (err) return toast(err); }
+    else if (raw.trim()) return toast(checkStmUrl(raw.trim()));
     S.meta.stmUrl = v; persist(); render(); toast(v ? 'Ссылка скрипта сохранена' : 'Ссылка скрипта удалена');
   }
   function readTable(file, cb) {
