@@ -10,6 +10,7 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 function fsCall(op, a) {
   if (op === 'setDoc') { const [c, id] = a.path.split('/'); (store[c] = store[c] || {})[id] = clone(a.data); return null; }
   if (op === 'batchSet') { a.items.forEach(([p, d]) => { const [c, id] = p.split('/'); (store[c] = store[c] || {})[id] = clone(d); }); return null; }
+  if (op === 'batchDelete') { a.paths.forEach((p) => { const [c, id] = p.split('/'); if (store[c]) delete store[c][id]; }); return null; }
   if (op === 'getDoc') { const [c, id] = a.path.split('/'); return (store[c] || {})[id] ? clone(store[c][id]) : null; }
   if (op === 'getDocs') { const docs = Object.values(store[a.path] || {}); const w = a.where; return clone(w ? docs.filter(d => (d[w[0]] || '') > w[2]) : docs); }
   throw new Error('op ' + op);
@@ -21,7 +22,7 @@ const FAKE = {
 export function getFirestore(){return {}}
 export function collection(db,name){return {path:name}}
 export function doc(c,id){return {path:c.path+'/'+id}}
-export function writeBatch(){const items=[];return {set(r,d){items.push([r.path,d])},commit(){return call('batchSet',{items})}}}
+export function writeBatch(){const items=[],dels=[];return {set(r,d){items.push([r.path,d])},delete(r){dels.push(r.path)},async commit(){if(items.length)await call('batchSet',{items});if(dels.length)await call('batchDelete',{paths:dels})}}}
 export function where(f,o,v){return [f,o,v]}
 export function query(c,w){return {path:c.path,where:w}}
 export async function getDocs(q){const docs=await call('getDocs',{path:q.path,where:q.where||null});return {forEach(fn){docs.forEach(d=>fn({data:()=>d}))}}}
@@ -120,6 +121,22 @@ const settle = (p) => p.waitForTimeout(1800);
   await A.page.click('.nav button[data-v="statements"]'); await A.page.fill('#stm-url', URL2); await A.page.click('button[data-act="stmurlsave"]'); await settle(A.page);
   await B.page.reload(); await settle(B.page);
   ok('new url reaches B', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === URL2);
+  // 9. сброс тестовой базы чистит и облако; записи не возвращаются; ссылка скрипта остаётся, список прочитанных файлов очищается
+  await A.page.evaluate(() => { KCApp.S.meta.stmFiles['f|1|x'] = { name: 'old.xlsx', wallet: 'alfa', at: '2026-11-01T00:00:00Z', rows: 1 }; KCApp.commit({}); });
+  await settle(A.page);
+  ok('before reset cloud has records', Object.keys(store.money_test_records || {}).length > 0);
+  await A.page.click('.nav button[data-v="settings"]'); await A.page.click('button[data-act="stab"][data-v="data"]');
+  await A.page.click('button[data-act="resetTest"]'); await settle(A.page);
+  ok('reset: cloud test records deleted', Object.keys(store.money_test_records || {}).length === 0, Object.keys(store.money_test_records || {}).length);
+  ok('reset: cloud decisions cleared', !((store.money_test_meta || {}).decisions) || ((store.money_test_meta.decisions.decisions || []).length === 0));
+  ok('reset: A empty and url kept', (await A.page.evaluate(() => KCApp.S.records.length)) === 0 && !!(await A.page.evaluate(() => KCApp.S.meta.stmUrl)));
+  // второе устройство хранит свою локальную копию: сброс нужно сделать и на нём
+  await B.page.click('.nav button[data-v="settings"]'); await B.page.click('button[data-act="stab"][data-v="data"]'); await B.page.click('button[data-act="resetTest"]'); await settle(B.page);
+  await A.page.reload(); await settle(A.page); await B.page.reload(); await settle(B.page);
+  ok('records do not come back to A and B', (await A.page.evaluate(() => KCApp.S.records.length)) === 0 && (await B.page.evaluate(() => KCApp.S.records.length)) === 0, [await A.page.evaluate(() => KCApp.S.records.length), await B.page.evaluate(() => KCApp.S.records.length)]);
+  ok('processed files list cleared', (await A.page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === 0 && (await B.page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === 0);
+  ok('script url kept on both devices', !!(await A.page.evaluate(() => KCApp.S.meta.stmUrl)) && !!(await B.page.evaluate(() => KCApp.S.meta.stmUrl)));
+  ok('prod collections untouched by test reset', !Object.keys(store).some(k => /^money_prod_/.test(k)));
   ok('no js errors', A.errors.length === 0 && B.errors.length === 0, [A.errors, B.errors]);
   await browser.close();
   console.log(pass + ' passed, ' + fail + ' failed');

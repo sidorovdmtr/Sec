@@ -206,7 +206,8 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   function shortDate(s) { var p = s.split('-'); return (+p[2]) + ' ' + MONTHS_GEN[+p[1] - 1]; }
   function parseDateInput(v) {
     if (v == null || v === '') return '';
-    if (v instanceof Date && !isNaN(v)) return isoDate(v);
+    // библиотека xlsx в некоторых поясах (Москва) отдаёт полночь как 23:59:43 предыдущего дня: прибавляем 10 минут, чтобы получить нужные сутки
+    if (v instanceof Date && !isNaN(v)) return isoDate(new Date(v.getTime() + 10 * 60 * 1000));
     if (typeof v === 'number' && v > 20000 && v < 80000) { // серийный номер Excel
       var t = new Date(Math.round((v - 25569) * 86400000));
       return t.getUTCFullYear() + '-' + pad(t.getUTCMonth() + 1) + '-' + pad(t.getUTCDate());
@@ -801,6 +802,21 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
   function mergeProcessed(a, b) { return Object.assign({}, b || {}, a || {}); }
 
+
+  // Исправление записей, загруженных из сводной таблицы со сдвигом даты на день назад (ошибка чтения дат xlsx в поясе Москвы).
+  // Затрагивает только записи импорта (source import с номером extId), которые ещё не исправлены. Остатки не меняются.
+  function importDateFixPatches(records) {
+    var patches = [];
+    records.forEach(function (r) {
+      if (r.deleted || r.source !== 'import' || !r.extId || r.dateFixed) return;
+      var p = { dateFixed: true };
+      if (validDate(r.date)) p.date = addDays(r.date, 1);
+      if (r.accrualDate && validDate(r.accrualDate)) p.accrualDate = addDays(r.accrualDate, 1);
+      patches.push({ id: r.id, patch: p });
+    });
+    return patches;
+  }
+
   /* ---------- копии ---------- */
   var BACKUP_VERSION = 1;
   function backupObject(state) {
@@ -872,7 +888,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     WALLETS: WALLETS, wallet: wallet, parseMoney: parseMoney, formatMoney: formatMoney,
     isoDate: isoDate, today: today, diffDays: diffDays, addDays: addDays, monthKey: monthKey, monthLabel: monthLabel, shiftMonth: shiftMonth,
     dayLabel: dayLabel, shortDate: shortDate, parseDateInput: parseDateInput, validDate: validDate,
-    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
+    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, importDateFixPatches: importDateFixPatches, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
     missingFields: missingFields, unfilledCount: unfilledCount, unpairedTransfers: unpairedTransfers, defaultBankState: defaultBankState,
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
@@ -1311,6 +1327,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Резервная копия</div><div class="small mu">' + (S.meta.lastBackupAt ? 'Последняя копия: ' + esc(ruDate(S.meta.lastBackupAt)) + '.' : 'Копия ещё не делалась.') + ' JSON нужен для восстановления, xlsx только для просмотра. На iPhone JSON откроется в меню «Поделиться»: выберите «Сохранить в Файлы». Раз в неделю копию нужно сохранять на Google Диск: автоматически этот шаг пока не работает, нужен серверный планировщик.</div><button type="button" class="btn main" data-act="backup">Скачать копию для восстановления (JSON)</button><button type="button" class="btn" data-act="backupxlsx">Скачать таблицу для просмотра (xlsx)</button>' +
       '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Восстановить из копии (JSON)<input type="file" accept=".json,application/json" id="restorefile" hidden></label></div>';
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Импорт сводной таблицы</div><div class="small mu">Таблица с колонками Финолога (xlsx). Ниже можно указать, сколько первых строк загрузить: для проверки хватит 5.</div><input id="importlimit" class="input" type="text" inputmode="numeric" placeholder="Сколько строк загрузить (пусто = все)"><label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Выбрать файл xlsx<input type="file" accept=".xlsx,.xls" id="summaryfile" hidden></label></div>';
+    out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Исправление дат импорта</div><div class="small mu">Если сводная таблица была загружена до 02.11.2026, её даты могли сдвинуться на день назад (например, 30 октября записано как 29 октября). Кнопка покажет, сколько записей затронуто, и спросит подтверждение. Остатки не меняются. Сначала сделайте копию.</div><button type="button" class="btn" data-act="datefix">Исправить даты импорта</button></div>';
     if (S.mode === 'test') out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Тестовая база</div><div class="small mu">Выдуманные данные для проверки. Сброс удаляет всю тестовую базу целиком, рабочая база не затрагивается.</div><button type="button" class="btn" data-act="seed">Добавить тестовые данные</button><button type="button" class="btn danger" data-act="resetTest">Сбросить тестовую базу</button></div>';
     var log = S.log.slice(-30).reverse();
     out += '<div class="dayh">Журнал изменений</div><div class="glass" style="padding:4px 14px">' + (log.length ? '<table class="tb"><tbody>' + log.map(function (l) { return '<tr><td class="mu small" style="white-space:nowrap">' + esc(ruDate(l.at)) + '</td><td>' + esc(l.summary) + '</td></tr>'; }).join('') + '</tbody></table>' : '<div class="small mu" style="padding:12px 0">Пока пусто</div>') + '</div>';
@@ -1750,13 +1767,32 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (map.date == null || (map.amount == null && map.debit == null && map.credit == null)) return { error: 'не определены колонки даты и суммы' };
     return { rows: KC.rowsFromTable(table, hi, map).rows };
   }
+  // расчёт загрузки выписки без внесения данных
+  function previewStatement(walletId, rows) {
+    var pendingKeys = S.decisions.filter(function (x) { return !x.resolvedAt && x.row; }).map(function (x) { return x.row.key; });
+    var res = KC.reconcile({ records: S.records, wallet: walletId, rows: rows, ignored: S.meta.ignoredKeys, skipKeys: pendingKeys });
+    var st = res.stats, addSum = 0, absentSum = 0; res.newRecords.forEach(function (r) { addSum += r.amount; });
+    return { res: res, addSum: addSum, changes: st.matched + st.added + st.decisions + st.absent > 0 };
+  }
+  function previewText(f, pv) {
+    var st = pv.res.stats, per = pv.res.period;
+    var t = 'Выписка «' + f.name + '» (' + wname(f.wallet) + ')' + (per ? ', период ' + ruDate(per.from) + ' — ' + ruDate(per.to) : '') + '\n\n' +
+      'Строк в файле: ' + st.rows + '\n' +
+      'Привязать к уже внесённым записям: ' + st.matched + '\n' +
+      'Добавить новых записей: ' + st.added + (st.added ? ' (на сумму ' + money(pv.addSum, { sign: true }) + ', остаток кошелька изменится на эту сумму)' : '') + '\n' +
+      'Уже загружены раньше (дубли, пропускаются): ' + st.duplicates + '\n' +
+      'Потребуют вашего решения: ' + st.decisions + '\n' +
+      (st.absent ? 'Помечены «нет в выписке»: ' + st.absent + '\n' : '');
+    if (st.added) t += '\nВНИМАНИЕ: если эти операции уже есть в учёте, новые записи создадут дубли. Проверьте цифры.\n';
+    return t + '\nВнести эти данные?';
+  }
   function syncStatements() {
     if (S.stmBusy) return;
     if (!S.meta.stmUrl) return toast('Сначала вставьте ссылку скрипта выписок (внизу этого экрана)');
     if (!S.online) return toast('Нет связи: синхронизация выписок недоступна');
     if (!window.XLSX) return toast('Библиотека xlsx не загрузилась (нет связи). Повторите позже.');
     S.stmBusy = true; setStmStatus('Проверяю папку…');
-    var issues = [], done = [], total = { rows: 0, matched: 0, added: 0, decisions: 0 };
+    var issues = [], done = [], declined = [], total = { rows: 0, matched: 0, added: 0, decisions: 0 };
     stmFetch({ action: 'list' }).then(function (j) {
       var found = KC.newStatementFiles(j.files || [], S.meta.stmFiles);
       found.unknown.forEach(function (f) { issues.push('«' + f.name + '»: не понятно, Альфа это или Промос (в названии нет «Выписка» или «Промос»)'); });
@@ -1767,6 +1803,11 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
           return stmFetch({ action: 'file', id: f.id }).then(function (j2) {
             var p = parseStatementBytes(b64ToBytes(j2.base64));
             if (p.error) { issues.push('«' + f.name + '»: ' + p.error); return; }
+            // предпросмотр: считаем результат без внесения и спрашиваем подтверждение, если что-то изменится
+            var pv = previewStatement(f.wallet, p.rows), ps = pv.res.stats;
+            if (pv.changes) {
+              if (!confirm(previewText(f, pv))) { declined.push(f.name); return; }
+            }
             var st = applyStatement(f.wallet, p.rows, f.name, true);
             S.meta.stmFiles[f.key] = { name: f.name, wallet: f.wallet, at: KC.nowISO(), rows: st.rows };
             done.push(f.name); total.rows += st.rows; total.matched += st.matched; total.added += st.added; total.decisions += st.decisions;
@@ -1777,6 +1818,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     }).then(function (found) {
       S.meta.stmCheckedAt = KC.nowISO(); persist();
       var msg = done.length ? 'Загружено выписок: ' + done.length + ' (строк ' + total.rows + ', привязано ' + total.matched + ', добавлено ' + total.added + ', нужно решение ' + total.decisions + ')' : 'Новых выписок не найдено';
+      if (declined.length) msg = (done.length ? msg + '. ' : '') + 'Не внесено по вашему отказу: ' + declined.join(', ') + ' (при следующей синхронизации вопрос повторится)';
       if (issues.length) msg += '. Не загружено: ' + issues.join('; ');
       S.stmMsg = msg; S.stmBusy = false; render(); toast(msg);
     }).catch(function (e) {
@@ -1868,6 +1910,15 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     return download(backupBase() + '.xlsx', new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   }
+  function doDateFix() {
+    var patches = KC.importDateFixPatches(S.records);
+    if (!patches.length) return toast('Нечего исправлять: записей импорта с несдвинутыми датами нет');
+    var sample = byId(patches[0].id), p0 = patches[0].patch;
+    var ex = sample ? ruDate(sample.date) + ' → ' + ruDate(p0.date) + ', ' + money(sample.amount, { sign: true }) : '';
+    if (!confirm('Записей импорта: ' + patches.length + '. Даты и даты начисления сдвинутся на +1 день. Пример: ' + ex + '. Остатки не изменятся. Копия сделана? Продолжить?')) return;
+    commit({ patches: patches }, 'fixdates', 'Исправлен сдвиг дат импорта сводной таблицы: ' + patches.length + ' записей (+1 день)');
+    render(); toast('Даты исправлены: ' + patches.length + ' записей');
+  }
   function doRestore(file) {
     var fr = new FileReader();
     fr.onload = function () {
@@ -1894,11 +1945,35 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
       render(); toast('Импортировано записей: ' + res.records.length + (newArts ? '. Новых статей: ' + newArts + ', укажите им вид деятельности в Настройках' : ''));
     });
   }
+  // очистка облачной части ТЕСТОВОЙ базы (money_test_*); рабочая база не затрагивается: режим проверяется, имя коллекции строится от режима
+  function cloudResetTest(keep) {
+    if (S.mode !== 'test') return Promise.reject(new Error('только тестовая база'));
+    if (!CFG.firebase) return Promise.resolve();
+    if (!Remote.ready || !S.online) return Promise.reject(new Error('нет входа в облако или связи'));
+    var fs = Remote.fs;
+    return fs.getDocs(col('records')).then(function (snap) {
+      var ids = []; snap.forEach(function (d) { var r = d.data(); if (r && r.id) ids.push(r.id); });
+      var jobs = [];
+      for (var i = 0; i < ids.length; i += 400) {
+        (function (chunk) { var b = fs.writeBatch(Remote.db); chunk.forEach(function (id) { b.delete(fs.doc(col('records'), id)); }); jobs.push(b.commit()); })(ids.slice(i, i + 400));
+      }
+      var bm = fs.writeBatch(Remote.db); ['state', 'decisions', 'log'].forEach(function (n) { bm.delete(fs.doc(col('meta'), n)); }); jobs.push(bm.commit());
+      // ссылка скрипта выписок остаётся, список прочитанных файлов очищается
+      jobs.push(fs.setDoc(fs.doc(col('meta'), 'settings'), { stmUrl: keep.stmUrl || '', stmUrlAt: keep.stmUrlAt || '', stmFiles: {} }));
+      return Promise.all(jobs);
+    });
+  }
   function resetTest() {
     if (S.mode !== 'test') return;
-    if (!confirm('Удалить всю тестовую базу целиком? Рабочая база не затрагивается.')) return;
-    ['records', 'log', 'decisions', 'meta'].forEach(function (k) { lsDel('kc.test.' + k); });
-    load(); S.view = 'ops'; render(); toast('Тестовая база сброшена');
+    if (!confirm('Удалить всю тестовую базу целиком: на этом устройстве и в облаке? Рабочая база не затрагивается.')) return;
+    clearTimeout(Remote.timer);
+    var keep = { stmUrl: S.meta.stmUrl, stmUrlAt: S.meta.stmUrlAt };
+    cloudResetTest(keep).then(function () {
+      ['records', 'log', 'decisions', 'meta'].forEach(function (k) { lsDel('kc.test.' + k); });
+      load(); S.meta.stmUrl = keep.stmUrl || ''; S.meta.stmUrlAt = keep.stmUrlAt || ''; persist(true); S.view = 'ops'; render(); toast('Тестовая база сброшена (устройство и облако)');
+    }).catch(function (e) {
+      toast('Сброс не выполнен: облако не очищено (' + (e && e.message ? e.message : 'ошибка') + '). Данные не тронуты.');
+    });
   }
 
   /* ---------- общий рендер и события ---------- */
@@ -1947,6 +2022,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (a === 'seedcat') { var have = {}; S.meta.articles.forEach(function (x) { have[x.name.toLowerCase()] = 1; }); var sc = KC.sampleCatalog().filter(function (x) { return !have[x.name.toLowerCase()]; }); S.meta.articles = S.meta.articles.concat(sc); addLog('catalog', 'Добавлен тестовый список статей (' + sc.length + ')'); persist(); render(); return toast('Добавлен тестовый список статей'); }
     if (a === 'seed') { var hv = {}; S.meta.articles.forEach(function (x) { hv[x.name.toLowerCase()] = 1; }); S.meta.articles = S.meta.articles.concat(KC.sampleCatalog().filter(function (x) { return !hv[x.name.toLowerCase()]; })); var smp = KC.sampleRecords(); commit({ newRecords: smp }, 'import', 'Добавлены тестовые данные (' + smp.length + ' записей)'); render(); return toast('Добавлены выдуманные тестовые данные'); }
     if (a === 'resetTest') return resetTest();
+    if (a === 'datefix') return doDateFix();
     if (a === 'stmsync') return syncStatements();
     if (a === 'stmdiag') return stmDiag();
     if (a === 'stmurlsave') return saveStmUrl();
