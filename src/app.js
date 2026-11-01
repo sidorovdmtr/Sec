@@ -293,10 +293,9 @@
       var name = esc(w.name) + (w.note ? ' <span class="tiny mu">(' + esc(w.note) + ')</span>' : '');
       return '<div class="wallet"><div class="row between"><span>' + name + '</span><span class="bold num">' + money(w.balance) + '</span></div><div class="track"><div class="fill" style="width:' + share + '%"></div></div>' + extra + '</div>';
     }).join('');
-    var transit = b.inTransit ? '<div class="row between tiny mu"><span>внесено без подтверждения банка, не в остатке</span><span class="num">' + money(b.inTransit, { sign: true }) + '</span></div>' : '';
-    var hidden = b.wallets.filter(function (w) { return w.hidden && (w.balance || w.inTransit); }).map(function (w) { return '<div class="row between tiny mu"><span>' + esc(w.name) + ' (вне итога)</span><span class="num">' + money(w.balance) + '</span></div>'; }).join('');
+    var hidden = b.wallets.filter(function (w) { return w.hidden && w.balance; }).map(function (w) { return '<div class="row between tiny mu"><span>' + esc(w.name) + ' (вне итога)</span><span class="num">' + money(w.balance) + '</span></div>'; }).join('');
     return '<div class="glass" style="padding:14px"><div class="row between"><div><div class="small mu">Всего по кошелькам</div><div class="num b7" style="font-size:30px;letter-spacing:-.5px" id="total">' + money(b.total) + '</div></div><button type="button" class="iconbtn" data-act="walletstoggle" aria-label="' + (S.walletsOpen ? 'Свернуть кошельки' : 'Показать кошельки') + '">' + svg(S.walletsOpen ? 'up' : 'down') + '</button></div>' +
-      (S.walletsOpen ? '<div style="display:flex;flex-direction:column;gap:10px;margin-top:6px;font-size:14px">' + rows + transit + hidden + '</div>' : '') + '</div>';
+      (S.walletsOpen ? '<div style="display:flex;flex-direction:column;gap:10px;margin-top:6px;font-size:14px">' + rows + hidden + '</div>' : '') + '</div>';
   }
   function donut(b) {
     var vis = b.wallets.filter(function (w) { return !w.hidden && w.balance > 0; }), sum = 0; vis.forEach(function (w) { sum += w.balance; });
