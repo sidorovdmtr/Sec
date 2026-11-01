@@ -405,5 +405,35 @@ function alfaScenario() {
   eq('no duplicate decisions on re-upload', again.decisions.filter(d => d.type === 'choose').length, 0);
 }
 
+// ---- суммы в выписках: запятая как разделитель тысяч (Альфа) и десятичная запятая ----
+eq('parseMoney alfa style', ['46,061.00', '1,215.00', '156.00'].map(KC.parseMoney), [4606100, 121500, 15600]);
+eq('parseMoney ru style', ['1 215,50', '1.215,00', '12,5', '\u22125,00', '1215,5'].map(KC.parseMoney), [121550, 121500, 1250, -500, 121550]);
+// ---- выписка Альфы: шапка в две строки, даты текстом, суммы текстом ----
+{
+  const table = [['Выписка по счёту'], ['За период', 'c 30.10.2026 по 30.10.2026'],
+    ['Дата', 'Номер документа', 'Дебет', 'Кредит', 'Контрагент', '', '', '', '', '', 'Назначение платежа', 'Код дебитора', 'Тип документа'],
+    ['', '', '', '', 'Наименование', 'ИНН', 'КПП', 'Счёт', 'БИК', 'Наименование банка'],
+    ['30.10.2026', '0', '156.00', '', 'АО «Альфа-Банк»', '', '', '', '', '', 'Комиссия', '', 'Банковский ордер'],
+    ['30.10.2026', '324', '1,215.00', '', 'АО «Х»', '', '', '', '', '', 'Оплата по счету', '', 'Платежное поручение'],
+    ['30.10.2026', '325', '', '10,000.50', 'ООО «Заказчик»', '', '', '', '', '', 'Оплата заказа', '', 'Платежное поручение']];
+  const hi = KC.findHeaderRow(table), map = KC.detectColumns(table[hi]), r = KC.rowsFromTable(table, hi, map);
+  eq('alfa-like table rows', [r.rows.map(x => x.amount), r.skipped], [[-15600, -121500, 1000050], 0]);
+}
+// ---- уже подтверждённые записи без ключа выписки (из сводной таблицы) не дублируются ----
+{
+  const mk = (amount, date) => R({ wallet: 'alfa', amount, date, source: 'import', bankState: 'confirmed', article: 'Закупка материала' });
+  const recs = [mk(-15600, '2026-10-30'), mk(-121500, '2026-10-30'), mk(-121500, '2026-10-30')];
+  const rows = [{ date: '2026-10-30', amount: -15600, counterparty: 'Банк', purpose: 'Комиссия', docNo: '0' },
+    { date: '2026-10-30', amount: -121500, counterparty: 'Х', purpose: 'Оплата', docNo: '324' },
+    { date: '2026-10-30', amount: -121500, counterparty: 'Y', purpose: 'Оплата', docNo: '325' },
+    { date: '2026-10-30', amount: -50000, counterparty: 'Z', purpose: 'Новая', docNo: '326' }];
+  const res = KC.reconcile({ records: recs, wallet: 'alfa', rows });
+  eq('linked to confirmed, one new', [res.stats.matched, res.stats.added, res.patches.length, res.newRecords.length], [3, 1, 3, 1]);
+  const linked = recs.map(r => Object.assign({}, r, (res.patches.find(p => p.id === r.id) || {}).patch));
+  const again = KC.reconcile({ records: linked.concat(res.newRecords), wallet: 'alfa', rows });
+  eq('re-upload after link: no duplicates', [again.stats.duplicates, again.stats.matched, again.stats.added], [4, 0, 0]);
+  eq('linked keeps confirmed state', linked.every(r => r.bankState === 'confirmed' && r.bankKey), true);
+}
+
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
