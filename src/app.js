@@ -75,7 +75,7 @@
   var S = {
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
-    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmFiles: {}, stmCheckedAt: '' },
+    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
     form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
@@ -86,7 +86,7 @@
     S.log = jparse(lsGet(pref() + 'log'), []);
     S.decisions = jparse(lsGet(pref() + 'decisions'), []);
     var meta = jparse(lsGet(pref() + 'meta'), {});
-    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', stmUrl: meta.stmUrl || '', stmFiles: meta.stmFiles || {}, stmCheckedAt: meta.stmCheckedAt || '', projects: meta.projects || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
+    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', stmUrl: meta.stmUrl || '', stmUrlAt: meta.stmUrlAt || '', stmFiles: meta.stmFiles || {}, stmCheckedAt: meta.stmCheckedAt || '', projects: meta.projects || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
     if (!S.records.length) S.meta.lastPull = ''; // на устройстве записей нет: берём всё из облака
     ensureCatalogNow(true); persist();
   }
@@ -176,8 +176,10 @@
       });
     }).then(function () {
       // ссылка скрипта выписок и список прочитанных файлов: общие для всех устройств (в облаке доступны только вам)
-      return syncDoc('settings', function () { return { stmUrl: S.meta.stmUrl, stmFiles: S.meta.stmFiles }; }, function (r) {
-        if (!S.meta.stmUrl && r.stmUrl) S.meta.stmUrl = r.stmUrl;
+      return syncDoc('settings', function () { return { stmUrl: S.meta.stmUrl, stmUrlAt: S.meta.stmUrlAt, stmFiles: S.meta.stmFiles }; }, function (r) {
+        // ссылка: побеждает более позднее действие (в том числе удаление); у старых записей без отметки времени ссылка берётся, только если своей нет
+        var rAt = r.stmUrlAt || '', lAt = S.meta.stmUrlAt || '';
+        if (rAt > lAt || (!rAt && !lAt && !S.meta.stmUrl && r.stmUrl)) { S.meta.stmUrl = r.stmUrl || ''; S.meta.stmUrlAt = rAt; }
         S.meta.stmFiles = KC.mergeProcessed(S.meta.stmFiles, r.stmFiles || {});
       });
     }).then(function () {
@@ -884,7 +886,7 @@
     v = v.replace(/\/dev(\?|$)/, '/exec$1');
     if (v) { var err = checkStmUrl(v); if (err) return toast(err); }
     else if (raw.trim()) return toast(checkStmUrl(raw.trim()));
-    S.meta.stmUrl = v; persist(); render(); toast(v ? 'Ссылка скрипта сохранена' : 'Ссылка скрипта удалена');
+    S.meta.stmUrl = v; S.meta.stmUrlAt = KC.nowISO(); persist(); render(); toast(v ? 'Ссылка скрипта сохранена' : 'Ссылка скрипта удалена');
   }
   function readTable(file, cb) {
     if (!window.XLSX) { toast('Библиотека xlsx не загрузилась (нет связи). Повторите позже.'); return; }
@@ -1030,7 +1032,7 @@
     if (a === 'resetTest') return resetTest();
     if (a === 'stmsync') return syncStatements();
     if (a === 'stmurlsave') return saveStmUrl();
-    if (a === 'stmurlclear') { S.meta.stmUrl = ''; persist(); render(); return; }
+    if (a === 'stmurlclear') { S.meta.stmUrl = ''; S.meta.stmUrlAt = KC.nowISO(); persist(); render(); toast('Ссылка скрипта удалена'); return; }
     if (a === 'backup') return doBackupJson();
     if (a === 'backupxlsx') return doBackupXlsx();
     if (a === 'teststm') return applyStatement(t.getAttribute('data-w'), KC.sampleStatement(t.getAttribute('data-w')), 'тестовая выписка');

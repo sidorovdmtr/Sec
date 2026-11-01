@@ -103,6 +103,23 @@ const settle = (p) => p.waitForTimeout(1800);
   await B.page.reload(); await settle(B.page);
   const sig = (p) => p.evaluate(() => JSON.stringify([KCApp.S.records.length, KCApp.S.meta.articles.length, Object.keys(KCApp.S.meta.projects).length, KCApp.S.decisions.filter(d => !d.resolvedAt).length]));
   ok('devices converge', (await sig(A.page)) === (await sig(B.page)), [await sig(A.page), await sig(B.page)]);
+  // 8. ссылка скрипта выписок: A сохраняет, B получает; B удаляет, и удаление доходит до A и не возвращается из облака
+  const URLX = 'https://script.google.com/macros/s/TEST/exec?key=abc';
+  await A.page.click('.nav button[data-v="statements"]');
+  await A.page.fill('#stm-url', URLX); await A.page.click('button[data-act="stmurlsave"]'); await settle(A.page);
+  await B.page.reload(); await settle(B.page);
+  ok('B got script url from cloud', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === URLX);
+  await B.page.click('.nav button[data-v="statements"]'); await B.page.click('button[data-act="stmurlclear"]'); await settle(B.page);
+  ok('B cleared url and sync did not bring it back', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
+  await B.page.reload(); await settle(B.page);
+  ok('B url still empty after reload', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
+  await A.page.reload(); await settle(A.page);
+  ok('A got the deletion', (await A.page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
+  // можно вставить новую ссылку, она тоже расходится
+  const URL2 = 'https://script.google.com/macros/s/NEW/exec?key=xyz';
+  await A.page.click('.nav button[data-v="statements"]'); await A.page.fill('#stm-url', URL2); await A.page.click('button[data-act="stmurlsave"]'); await settle(A.page);
+  await B.page.reload(); await settle(B.page);
+  ok('new url reaches B', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === URL2);
   ok('no js errors', A.errors.length === 0 && B.errors.length === 0, [A.errors, B.errors]);
   await browser.close();
   console.log(pass + ' passed, ' + fail + ' failed');
