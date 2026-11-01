@@ -1175,7 +1175,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">База: ' + (S.mode === 'test' ? 'тестовая' : 'рабочая') + '</div><div class="small mu">Записей: ' + live + '. ' + (CFG.firebase ? esc(S.sync.text || 'Облако не подключено') : 'Данные хранятся только в этом браузере или телефоне. Облако Firebase не подключено.') + '</div><div class="tiny mu">Права: у всех, кто имеет доступ к инструменту, полные права, включая настройки статей. Список доступа задаётся в правилах Firebase (файл firestore.rules).</div>' +
       (CFG.firebase && Remote.authMod && !Remote.user ? '<button type="button" class="btn main" data-act="signin">Войти через Google</button>' : '') +
       (CFG.allowProd ? '<button type="button" class="btn" data-act="switchmode">' + (S.mode === 'test' ? 'Перейти на рабочую базу' : 'Перейти на тестовую базу') + '</button>' : '') + '</div>';
-    out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Резервная копия</div><div class="small mu">' + (S.meta.lastBackupAt ? 'Последняя копия: ' + esc(ruDate(S.meta.lastBackupAt)) + '.' : 'Копия ещё не делалась.') + ' Файлы xlsx (для просмотра) и JSON (для восстановления). Раз в неделю копию нужно сохранять на Google Диск: автоматически этот шаг пока не работает, нужен серверный планировщик.</div><button type="button" class="btn main" data-act="backup">Скачать копию (xlsx и JSON)</button>' +
+    out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Резервная копия</div><div class="small mu">' + (S.meta.lastBackupAt ? 'Последняя копия: ' + esc(ruDate(S.meta.lastBackupAt)) + '.' : 'Копия ещё не делалась.') + ' JSON нужен для восстановления, xlsx только для просмотра. На iPhone JSON откроется в меню «Поделиться»: выберите «Сохранить в Файлы». Раз в неделю копию нужно сохранять на Google Диск: автоматически этот шаг пока не работает, нужен серверный планировщик.</div><button type="button" class="btn main" data-act="backup">Скачать копию для восстановления (JSON)</button><button type="button" class="btn" data-act="backupxlsx">Скачать таблицу для просмотра (xlsx)</button>' +
       '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Восстановить из копии (JSON)<input type="file" accept=".json,application/json" id="restorefile" hidden></label></div>';
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Импорт сводной таблицы</div><div class="small mu">Таблица с колонками Финолога (xlsx). Ниже можно указать, сколько первых строк загрузить: для проверки хватит 5.</div><input id="importlimit" class="input" type="text" inputmode="numeric" placeholder="Сколько строк загрузить (пусто = все)"><label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Выбрать файл xlsx<input type="file" accept=".xlsx,.xls" id="summaryfile" hidden></label></div>';
     if (S.mode === 'test') out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Тестовая база</div><div class="small mu">Выдуманные данные для проверки. Сброс удаляет всю тестовую базу целиком, рабочая база не затрагивается.</div><button type="button" class="btn" data-act="seed">Добавить тестовые данные</button><button type="button" class="btn danger" data-act="resetTest">Сбросить тестовую базу</button></div>';
@@ -1582,17 +1582,28 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
 
   /* ---------- копии, импорт ---------- */
-  function doBackup() {
+  // одно нажатие = один файл (iPhone Safari отбрасывает второе скачивание из одного нажатия)
+  function backupBase() { return 'kubcrafter-dengi-' + S.mode + '-' + KC.today(); }
+  function markBackup() { S.meta.lastBackupAt = KC.nowISO(); addLog('backup', 'Сделана копия (' + S.records.length + ' записей)'); persist(); render(); }
+  function doBackupJson() {
     var obj = KC.backupObject({ records: S.records, log: S.log, decisions: S.decisions, meta: { ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements, projects: S.meta.projects, articles: S.meta.articles }, namespace: S.mode });
-    var stamp = KC.today(), base = 'kubcrafter-dengi-' + S.mode + '-' + stamp;
-    var jobs = [download(base + '.json', new Blob([JSON.stringify(obj)], { type: 'application/json' }))];
-    if (window.XLSX) {
-      var ws = XLSX.utils.aoa_to_sheet(KC.recordsToTable(S.records)), wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Операции');
-      var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-      jobs.push(download(base + '.xlsx', new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })));
-    } else toast('xlsx не создан: библиотека не загрузилась. JSON-копия сделана.');
-    S.meta.lastBackupAt = KC.nowISO(); addLog('backup', 'Сделана копия (' + S.records.length + ' записей)'); persist(); render();
-    return Promise.all(jobs);
+    var name = backupBase() + '.json', text = JSON.stringify(obj);
+    var file = null;
+    try { file = new File([text], name, { type: 'application/json' }); } catch (e) {}
+    // iPhone: системное меню «Поделиться» → «Сохранить в Файлы»; если недоступно или отменено, обычное скачивание
+    if (file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+      return navigator.share({ files: [file], title: name }).then(markBackup, function (e) {
+        if (e && e.name === 'AbortError') return;
+        return download(name, new Blob([text], { type: 'application/octet-stream' })).then(markBackup);
+      });
+    }
+    return download(name, new Blob([text], { type: 'application/octet-stream' })).then(markBackup);
+  }
+  function doBackupXlsx() {
+    if (!window.XLSX) { toast('Библиотека xlsx не загрузилась (нет связи). Для восстановления используйте JSON.'); return Promise.resolve(); }
+    var ws = XLSX.utils.aoa_to_sheet(KC.recordsToTable(S.records)), wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Операции');
+    var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    return download(backupBase() + '.xlsx', new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   }
   function doRestore(file) {
     var fr = new FileReader();
@@ -1673,7 +1684,8 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (a === 'seedcat') { var have = {}; S.meta.articles.forEach(function (x) { have[x.name.toLowerCase()] = 1; }); var sc = KC.sampleCatalog().filter(function (x) { return !have[x.name.toLowerCase()]; }); S.meta.articles = S.meta.articles.concat(sc); addLog('catalog', 'Добавлен тестовый список статей (' + sc.length + ')'); persist(); render(); return toast('Добавлен тестовый список статей'); }
     if (a === 'seed') { var hv = {}; S.meta.articles.forEach(function (x) { hv[x.name.toLowerCase()] = 1; }); S.meta.articles = S.meta.articles.concat(KC.sampleCatalog().filter(function (x) { return !hv[x.name.toLowerCase()]; })); var smp = KC.sampleRecords(); commit({ newRecords: smp }, 'import', 'Добавлены тестовые данные (' + smp.length + ' записей)'); render(); return toast('Добавлены выдуманные тестовые данные'); }
     if (a === 'resetTest') return resetTest();
-    if (a === 'backup') return doBackup();
+    if (a === 'backup') return doBackupJson();
+    if (a === 'backupxlsx') return doBackupXlsx();
     if (a === 'teststm') return applyStatement(t.getAttribute('data-w'), KC.sampleStatement(t.getAttribute('data-w')), 'тестовая выписка');
     if (a === 'resolve') return resolveDec(t.getAttribute('data-id'), t.getAttribute('data-c'));
     if (a === 'signin') return remoteSignIn();
