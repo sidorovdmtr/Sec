@@ -51,7 +51,14 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   ok('no url: hint', (await toastTxt()).indexOf('вставьте ссылку') >= 0, await toastTxt());
   await page.fill('#stm-url', 'https://example.com/x'); await page.click('button[data-act="stmurlsave"]');
   ok('bad url rejected', (await page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
-  await page.fill('#stm-url', 'https://script.google.com/macros/s/TEST/exec?key=wrong'); await page.click('button[data-act="stmurlsave"]');
+  ok('bad host explained', (await toastTxt()).indexOf('script.google.com') >= 0, await toastTxt());
+  await page.fill('#stm-url', 'https://script.google.com/macros/s/TEST/dev?key=abc'); await page.click('button[data-act="stmurlsave"]');
+  ok('dev url explained', (await toastTxt()).indexOf('/dev') >= 0 && (await page.evaluate(() => KCApp.S.meta.stmUrl)) === '', await toastTxt());
+  await page.fill('#stm-url', 'https://script.google.com/macros/s/TEST/exec'); await page.click('button[data-act="stmurlsave"]');
+  ok('missing key explained', (await toastTxt()).indexOf('key=') >= 0 && (await page.evaluate(() => KCApp.S.meta.stmUrl)) === '', await toastTxt());
+  // вставка из журнала выполнения: время, слово «Информация», кавычки и неразрывный пробел вокруг ссылки
+  await page.fill('#stm-url', '22:30:11\u00A0Информация\n\u00AB https://script.google.com/macros/s/TEST/exec?key=wrong \u00BB'); await page.click('button[data-act="stmurlsave"]');
+  ok('url extracted from log paste', (await page.evaluate(() => KCApp.S.meta.stmUrl)) === 'https://script.google.com/macros/s/TEST/exec?key=wrong', await page.evaluate(() => KCApp.S.meta.stmUrl));
   await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(400);
   ok('wrong key message', (await toastTxt()).indexOf('неверный ключ') >= 0, await toastTxt());
   await page.evaluate((k) => { KCApp.S.meta.stmUrl = 'https://script.google.com/macros/s/TEST/exec?key=' + k; KCApp.render(); }, KEY);
