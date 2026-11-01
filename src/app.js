@@ -1041,11 +1041,35 @@
       render(); toast('Импортировано записей: ' + res.records.length + (newArts ? '. Новых статей: ' + newArts + ', укажите им вид деятельности в Настройках' : ''));
     });
   }
+  // очистка облачной части ТЕСТОВОЙ базы (money_test_*); рабочая база не затрагивается: режим проверяется, имя коллекции строится от режима
+  function cloudResetTest(keep) {
+    if (S.mode !== 'test') return Promise.reject(new Error('только тестовая база'));
+    if (!CFG.firebase) return Promise.resolve();
+    if (!Remote.ready || !S.online) return Promise.reject(new Error('нет входа в облако или связи'));
+    var fs = Remote.fs;
+    return fs.getDocs(col('records')).then(function (snap) {
+      var ids = []; snap.forEach(function (d) { var r = d.data(); if (r && r.id) ids.push(r.id); });
+      var jobs = [];
+      for (var i = 0; i < ids.length; i += 400) {
+        (function (chunk) { var b = fs.writeBatch(Remote.db); chunk.forEach(function (id) { b.delete(fs.doc(col('records'), id)); }); jobs.push(b.commit()); })(ids.slice(i, i + 400));
+      }
+      var bm = fs.writeBatch(Remote.db); ['state', 'decisions', 'log'].forEach(function (n) { bm.delete(fs.doc(col('meta'), n)); }); jobs.push(bm.commit());
+      // ссылка скрипта выписок остаётся, список прочитанных файлов очищается
+      jobs.push(fs.setDoc(fs.doc(col('meta'), 'settings'), { stmUrl: keep.stmUrl || '', stmUrlAt: keep.stmUrlAt || '', stmFiles: {} }));
+      return Promise.all(jobs);
+    });
+  }
   function resetTest() {
     if (S.mode !== 'test') return;
-    if (!confirm('Удалить всю тестовую базу целиком? Рабочая база не затрагивается.')) return;
-    ['records', 'log', 'decisions', 'meta'].forEach(function (k) { lsDel('kc.test.' + k); });
-    load(); S.view = 'ops'; render(); toast('Тестовая база сброшена');
+    if (!confirm('Удалить всю тестовую базу целиком: на этом устройстве и в облаке? Рабочая база не затрагивается.')) return;
+    clearTimeout(Remote.timer);
+    var keep = { stmUrl: S.meta.stmUrl, stmUrlAt: S.meta.stmUrlAt };
+    cloudResetTest(keep).then(function () {
+      ['records', 'log', 'decisions', 'meta'].forEach(function (k) { lsDel('kc.test.' + k); });
+      load(); S.meta.stmUrl = keep.stmUrl || ''; S.meta.stmUrlAt = keep.stmUrlAt || ''; persist(true); S.view = 'ops'; render(); toast('Тестовая база сброшена (устройство и облако)');
+    }).catch(function (e) {
+      toast('Сброс не выполнен: облако не очищено (' + (e && e.message ? e.message : 'ошибка') + '). Данные не тронуты.');
+    });
   }
 
   /* ---------- общий рендер и события ---------- */
