@@ -425,6 +425,7 @@
 
   /* ---------- выписки и сверка ---------- */
   var TRANSFER_RE = /перевод|внесени|снят|пополнени|выдач[аи]\s+налич/i;
+  var COMMISSION_RE = /комисси/i;
   function normText(s) { return (s || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 40); }
   function rowBaseKey(r) { return [r.date, r.amount, r.docNo || '', normText(r.counterparty)].join('|'); }
   function stampKeys(rows) { // ключ строки: дата|сумма|номер|контрагент, повторы внутри файла нумеруются
@@ -433,7 +434,7 @@
     return rows;
   }
   function recordFromBankRow(walletId, row) {
-    var like = TRANSFER_RE.test(row.purpose || '') || TRANSFER_RE.test(row.counterparty || '');
+    var like = (TRANSFER_RE.test(row.purpose || '') || TRANSFER_RE.test(row.counterparty || '')) && !COMMISSION_RE.test(row.purpose || ''); // «Комиссия за переводы» не перевод
     return newRecord({
       source: 'bank', wallet: walletId, amount: row.amount, date: row.date, counterparty: row.counterparty, description: row.purpose,
       docNo: row.docNo, bankKey: row.key, bankState: 'confirmed', bankDate: row.date, bankPurpose: row.purpose,
@@ -474,6 +475,20 @@
           if (!usedConfirmed[c.id] && c.amount === row.amount && c.date === row.date) {
             usedConfirmed[c.id] = 1; res.patches.push({ id: c.id, patch: { bankKey: row.key, bankDate: row.date, bankPurpose: row.purpose || '' } });
             res.stats.matched++; res.stats.linked = (res.stats.linked || 0) + 1; return;
+          }
+        }
+        // банк пишет комиссию за день одной строкой, а в учёте она разбита по платежам («Комиссия за перевод … N 324 от …»):
+        // привязываем группу, если это записи того же дня и кошелька, а их сумма ровно равна строке выписки
+        if (COMMISSION_RE.test(row.purpose || '') || COMMISSION_RE.test(row.counterparty || '')) {
+          var group = records.filter(function (r) {
+            return !r.deleted && !r.planned && r.wallet === walletId && r.date === row.date && !r.bankKey && !usedConfirmed[r.id] && !isTransfer(r) &&
+              (r.amount < 0) === (row.amount < 0) && COMMISSION_RE.test((r.description || '') + ' ' + (r.bankPurpose || '')) &&
+              (r.bankState === 'confirmed' || r.bankState === 'pending' || r.bankState === 'unconfirmed');
+          });
+          var sum = 0; group.forEach(function (r) { sum += r.amount; });
+          if (group.length >= 2 && sum === row.amount) {
+            group.forEach(function (r) { usedConfirmed[r.id] = 1; touched[r.id] = 1; res.patches.push({ id: r.id, patch: { bankState: 'confirmed', bankKey: row.key, bankDate: row.date, bankPurpose: row.purpose || '' } }); });
+            res.stats.matched++; res.stats.linked = (res.stats.linked || 0) + 1; res.stats.commissionGroups = (res.stats.commissionGroups || 0) + 1; return;
           }
         }
       }
