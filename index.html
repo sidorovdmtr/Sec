@@ -134,6 +134,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
  .row-op .c-main .t{font-weight:500}
  .tbl .dayh{text-align:center}
 }
+.linkbtn{background:none;border:0;padding:0;color:var(--acclink);text-decoration:underline;font:inherit;cursor:pointer}
 
 </style>
 </head>
@@ -778,6 +779,28 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     return out;
   }
 
+
+  /* ---------- автозагрузка выписок из папки на Диске ---------- */
+  // кошелёк по имени файла: Промос — «Промос» в названии; Альфа — файл «Выписка…» или номер счёта; иначе не определён
+  function statementWalletByName(name) {
+    var n = name || '';
+    if (/промос/i.test(n)) return 'promos';
+    if (/^выписка/i.test(n) || /40702810626180001762/.test(n) || /альфа/i.test(n)) return 'alfa';
+    return '';
+  }
+  function statementFileKey(f) { return [f.id, f.size, f.modified].join('|'); }
+  // files: список из скрипта {id,name,size,modified}; processed: карта ключ → {…}
+  function newStatementFiles(files, processed) {
+    var out = { fresh: [], unknown: [], seen: 0 };
+    (files || []).slice().sort(function (a, b) { return a.modified < b.modified ? -1 : a.modified > b.modified ? 1 : 0; }).forEach(function (f) {
+      if ((processed || {})[statementFileKey(f)]) { out.seen++; return; }
+      var w = statementWalletByName(f.name);
+      if (w) out.fresh.push(Object.assign({ wallet: w, key: statementFileKey(f) }, f)); else out.unknown.push(f);
+    });
+    return out;
+  }
+  function mergeProcessed(a, b) { return Object.assign({}, b || {}, a || {}); }
+
   /* ---------- копии ---------- */
   var BACKUP_VERSION = 1;
   function backupObject(state) {
@@ -849,7 +872,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     WALLETS: WALLETS, wallet: wallet, parseMoney: parseMoney, formatMoney: formatMoney,
     isoDate: isoDate, today: today, diffDays: diffDays, addDays: addDays, monthKey: monthKey, monthLabel: monthLabel, shiftMonth: shiftMonth,
     dayLabel: dayLabel, shortDate: shortDate, parseDateInput: parseDateInput, validDate: validDate,
-    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
+    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
     missingFields: missingFields, unfilledCount: unfilledCount, unpairedTransfers: unpairedTransfers, defaultBankState: defaultBankState,
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
@@ -940,7 +963,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   var S = {
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
-    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {} },
+    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmFiles: {}, stmCheckedAt: '' },
     form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
@@ -951,7 +974,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     S.log = jparse(lsGet(pref() + 'log'), []);
     S.decisions = jparse(lsGet(pref() + 'decisions'), []);
     var meta = jparse(lsGet(pref() + 'meta'), {});
-    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', projects: meta.projects || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
+    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', stmUrl: meta.stmUrl || '', stmFiles: meta.stmFiles || {}, stmCheckedAt: meta.stmCheckedAt || '', projects: meta.projects || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
     if (!S.records.length) S.meta.lastPull = ''; // на устройстве записей нет: берём всё из облака
     ensureCatalogNow(true); persist();
   }
@@ -1038,6 +1061,12 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
         return { decisions: S.decisions, ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements };
       }, function (r) {
         S.decisions = KC.mergeDecisions(S.decisions, r.decisions || []); S.meta.ignoredKeys = KC.mergeKeys(S.meta.ignoredKeys, r.ignoredKeys || []); S.meta.statements = KC.mergeStatements(S.meta.statements, r.statements || []);
+      });
+    }).then(function () {
+      // ссылка скрипта выписок и список прочитанных файлов: общие для всех устройств (в облаке доступны только вам)
+      return syncDoc('settings', function () { return { stmUrl: S.meta.stmUrl, stmFiles: S.meta.stmFiles }; }, function (r) {
+        if (!S.meta.stmUrl && r.stmUrl) S.meta.stmUrl = r.stmUrl;
+        S.meta.stmFiles = KC.mergeProcessed(S.meta.stmFiles, r.stmFiles || {});
       });
     }).then(function () {
       return syncDoc('log', function () { return { entries: S.log }; }, function (r) { S.log = KC.mergeLog(S.log, r.entries || [], 1000); });
@@ -1227,6 +1256,13 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     var r = byId(d.recId); if (!r) return '';
     return '<div class="dec glass"><div class="bold">Нет в выписке ' + esc(wname(d.wallet)) + ': ' + money(r.amount, { sign: true }) + '</div><div class="small mu">Ваша запись от ' + esc(ruDate(r.date)) + (r.description ? ' («' + esc(r.description) + '»)' : '') + ' попадает в период выписки, но в ней не найдена.</div><div class="opts"><button type="button" class="btn" data-act="resolve" data-id="' + d.id + '" data-c="keep">Оставить как есть</button><button type="button" class="btn" data-act="edit" data-id="' + esc(r.id) + '">Открыть запись</button><button type="button" class="btn danger" data-act="resolve" data-id="' + d.id + '" data-c="delete">Удалить запись</button></div></div>';
   }
+  function syncCard() {
+    var last = S.meta.stmCheckedAt ? 'Последняя проверка: ' + esc(ruDate(S.meta.stmCheckedAt)) + ', ' + esc(S.meta.stmCheckedAt.slice(11, 16)) + ' UTC. ' : 'Папка ещё не проверялась. ';
+    var cfg = S.meta.stmUrl ? '<div class="small mu">Ссылка скрипта сохранена. <button type="button" class="linkbtn" data-act="stmurlclear">Удалить</button></div>' :
+      '<div class="field"><label>Ссылка скрипта выписок (как пароль, никому не показывайте)</label><input class="input" id="stm-url" placeholder="https://script.google.com/macros/s/…/exec?key=…" autocomplete="off"></div><button type="button" class="btn" data-act="stmurlsave">Сохранить ссылку</button>';
+    return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold" style="font-size:15px">Автозагрузка из папки на Диске</div><div class="small mu">' + last + 'Новые файлы из папки читаются и сверяются, уже прочитанные пропускаются.</div>' +
+      '<button type="button" class="btn main" data-act="stmsync"' + (S.stmBusy ? ' disabled' : '') + '>' + (S.stmBusy ? 'Проверяю…' : 'Синхронизировать выписки') + '</button><div class="small" id="stmstatus">' + esc(S.stmMsg || '') + '</div>' + cfg + '</div>';
+  }
   function stmCard(id, desc) {
     var last = null; S.meta.statements.forEach(function (s) { if (s.wallet === id) last = s; });
     return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="row between"><div class="bold" style="font-size:15px">' + esc(wname(id)) + '</div><span class="pill warn">' + esc(desc) + '</span></div><div class="small mu">' + (last ? 'Последняя загрузка: ' + esc(ruDate(last.at)) + ', период ' + esc(ruDate(last.from)) + ' — ' + esc(ruDate(last.to)) + ', строк ' + last.rows + '.' : 'Выписок ещё не загружали.') + '</div>' +
@@ -1235,7 +1271,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
   function viewStatements() {
     var out = '<div class="row between"><div class="h2" style="margin:0">Выписки и сверка</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
-    out += stmCard('alfa', 'автозагрузка с почты — позже') + stmCard('promos', 'раз в квартал, вручную');
+    out += syncCard() + stmCard('alfa', 'или вручную из файла') + stmCard('promos', 'или вручную из файла');
     var decs = S.decisions.filter(function (x) { return !x.resolvedAt; }).map(decisionHtml).filter(Boolean);
     out += '<div class="dayh">Нужно ваше решение: ' + decs.length + '</div>' + (decs.length ? decs.join('') : '<div class="glass mu small" style="padding:14px">Всё сверено, решений нет</div>');
     var un = KC.unpairedTransfers(S.records);
@@ -1624,7 +1660,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
 
   /* ---------- выписки: загрузка, сверка ---------- */
-  function applyStatement(walletId, rows, name) {
+  function applyStatement(walletId, rows, name, quiet) {
     var pendingKeys = S.decisions.filter(function (x) { return !x.resolvedAt && x.row; }).map(function (x) { return x.row.key; });
     var res = KC.reconcile({ records: S.records, wallet: walletId, rows: rows, ignored: S.meta.ignoredKeys, skipKeys: pendingKeys });
     S.decisions = S.decisions.concat(res.decisions);
@@ -1632,10 +1668,74 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     S.meta.statements.push({ wallet: walletId, at: KC.nowISO(), from: res.period ? res.period.from : '', to: res.period ? res.period.to : '', rows: st.rows, name: name || '' });
     ensureCatalogNow(true);
     commit({ patches: res.patches, newRecords: res.newRecords }, 'reconcile', 'Выписка ' + wname(walletId) + ': строк ' + st.rows + ', привязано ' + st.matched + ', добавлено ' + st.added + ', дублей ' + st.duplicates + ', решений ' + st.decisions);
+    if (quiet) return st;
     render();
     var parts = ['строк ' + st.rows, 'привязано ' + st.matched, 'добавлено ' + st.added, 'дублей ' + st.duplicates, 'нужно решение ' + st.decisions];
     if (st.absent) parts.push('нет в выписке ' + st.absent);
     toast('Выписка ' + wname(walletId) + ': ' + parts.join(', '));
+    return st;
+  }
+  /* ---------- синхронизация выписок из папки на Диске (через скрипт Apps Script, см. README) ---------- */
+  function stmScriptUrl(params) {
+    var u = new URL(S.meta.stmUrl); Object.keys(params).forEach(function (k) { u.searchParams.set(k, params[k]); }); return u.toString();
+  }
+  function stmFetch(params) {
+    return fetch(stmScriptUrl(params), { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('Ответ скрипта: ' + r.status);
+      return r.json();
+    }).then(function (j) {
+      if (j && j.error) throw new Error(j.error === 'forbidden' ? 'неверный ключ в ссылке' : j.error === 'not_configured' ? 'скрипт не настроен (папка или ключ)' : j.error === 'not_in_folder' ? 'файл не из папки выписок' : j.error);
+      return j;
+    });
+  }
+  function b64ToBytes(b64) { var bin = atob(b64), n = bin.length, u = new Uint8Array(n); for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i); return u; }
+  // читает одну выписку из файла: {wallet, rows} или {error}
+  function parseStatementBytes(bytes) {
+    var wb = XLSX.read(bytes, { type: 'array', cellDates: true }), ws = wb.Sheets[wb.SheetNames[0]];
+    var table = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+    var hi = KC.findHeaderRow(table); if (hi < 0) return { error: 'не найдена шапка таблицы' };
+    var map = KC.detectColumns(table[hi]);
+    if (map.date == null || (map.amount == null && map.debit == null && map.credit == null)) return { error: 'не определены колонки даты и суммы' };
+    return { rows: KC.rowsFromTable(table, hi, map).rows };
+  }
+  function syncStatements() {
+    if (S.stmBusy) return;
+    if (!S.meta.stmUrl) return toast('Сначала вставьте ссылку скрипта выписок (внизу этого экрана)');
+    if (!S.online) return toast('Нет связи: синхронизация выписок недоступна');
+    if (!window.XLSX) return toast('Библиотека xlsx не загрузилась (нет связи). Повторите позже.');
+    S.stmBusy = true; setStmStatus('Проверяю папку…');
+    var issues = [], done = [], total = { rows: 0, matched: 0, added: 0, decisions: 0 };
+    stmFetch({ action: 'list' }).then(function (j) {
+      var found = KC.newStatementFiles(j.files || [], S.meta.stmFiles);
+      found.unknown.forEach(function (f) { issues.push('«' + f.name + '»: не понятно, Альфа это или Промос (в названии нет «Выписка» или «Промос»)'); });
+      var chain = Promise.resolve();
+      found.fresh.forEach(function (f) {
+        chain = chain.then(function () {
+          setStmStatus('Читаю: ' + f.name);
+          return stmFetch({ action: 'file', id: f.id }).then(function (j2) {
+            var p = parseStatementBytes(b64ToBytes(j2.base64));
+            if (p.error) { issues.push('«' + f.name + '»: ' + p.error); return; }
+            var st = applyStatement(f.wallet, p.rows, f.name, true);
+            S.meta.stmFiles[f.key] = { name: f.name, wallet: f.wallet, at: KC.nowISO(), rows: st.rows };
+            done.push(f.name); total.rows += st.rows; total.matched += st.matched; total.added += st.added; total.decisions += st.decisions;
+          }).catch(function (e) { issues.push('«' + f.name + '»: ' + (e && e.message ? e.message : 'ошибка чтения')); });
+        });
+      });
+      return chain.then(function () { return found; });
+    }).then(function (found) {
+      S.meta.stmCheckedAt = KC.nowISO(); persist();
+      var msg = done.length ? 'Загружено выписок: ' + done.length + ' (строк ' + total.rows + ', привязано ' + total.matched + ', добавлено ' + total.added + ', нужно решение ' + total.decisions + ')' : 'Новых выписок не найдено';
+      if (issues.length) msg += '. Не загружено: ' + issues.join('; ');
+      S.stmMsg = msg; S.stmBusy = false; render(); toast(msg);
+    }).catch(function (e) {
+      S.stmBusy = false; S.stmMsg = 'Не удалось проверить папку: ' + (e && e.message ? e.message : 'ошибка связи'); render(); toast(S.stmMsg);
+    });
+  }
+  function setStmStatus(t) { S.stmMsg = t; var el = $('#stmstatus'); if (el) el.textContent = t; }
+  function saveStmUrl() {
+    var v = ($('#stm-url') || {}).value || ''; v = v.trim();
+    if (v) { try { var u = new URL(v); if (u.hostname !== 'script.google.com' || !u.searchParams.get('key')) throw new Error('x'); } catch (e) { return toast('Нужна ссылка вида https://script.google.com/macros/s/…/exec?key=…'); } }
+    S.meta.stmUrl = v; persist(); render(); toast(v ? 'Ссылка скрипта сохранена' : 'Ссылка скрипта удалена');
   }
   function readTable(file, cb) {
     if (!window.XLSX) { toast('Библиотека xlsx не загрузилась (нет связи). Повторите позже.'); return; }
@@ -1779,6 +1879,9 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (a === 'seedcat') { var have = {}; S.meta.articles.forEach(function (x) { have[x.name.toLowerCase()] = 1; }); var sc = KC.sampleCatalog().filter(function (x) { return !have[x.name.toLowerCase()]; }); S.meta.articles = S.meta.articles.concat(sc); addLog('catalog', 'Добавлен тестовый список статей (' + sc.length + ')'); persist(); render(); return toast('Добавлен тестовый список статей'); }
     if (a === 'seed') { var hv = {}; S.meta.articles.forEach(function (x) { hv[x.name.toLowerCase()] = 1; }); S.meta.articles = S.meta.articles.concat(KC.sampleCatalog().filter(function (x) { return !hv[x.name.toLowerCase()]; })); var smp = KC.sampleRecords(); commit({ newRecords: smp }, 'import', 'Добавлены тестовые данные (' + smp.length + ' записей)'); render(); return toast('Добавлены выдуманные тестовые данные'); }
     if (a === 'resetTest') return resetTest();
+    if (a === 'stmsync') return syncStatements();
+    if (a === 'stmurlsave') return saveStmUrl();
+    if (a === 'stmurlclear') { S.meta.stmUrl = ''; persist(); render(); return; }
     if (a === 'backup') return doBackupJson();
     if (a === 'backupxlsx') return doBackupXlsx();
     if (a === 'teststm') return applyStatement(t.getAttribute('data-w'), KC.sampleStatement(t.getAttribute('data-w')), 'тестовая выписка');
@@ -1832,7 +1935,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (CFG.firebase) { setSync('connecting', 'Облако: подключение…'); remoteInit(); } else setSync('local', '');
     if (CFG.sw && 'serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {} }
     render();
-    window.KCApp = { S: S, commit: commit, render: render };
+    window.KCApp = { S: S, commit: commit, render: render, syncStatements: syncStatements, parseStatementBytes: parseStatementBytes };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
