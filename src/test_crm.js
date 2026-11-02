@@ -28,7 +28,7 @@ const inStage = (page, stage, name) => page.locator('.kst[data-stage="' + stage 
 
   ok('board is the default view', (await page.locator('#kb').count()) === 1 && (await page.locator('button[data-act="projmode"][data-v="board"].on').count()) === 1);
   ok('four group columns', (await page.locator('#kb .kcol').count()) === 4);
-  ok('fourteen stage zones', (await page.locator('#kb .kst').count()) === 14);
+  ok('fifteen stage zones', (await page.locator('#kb .kst').count()) === 15);
   ok('existing projects start on the first stage', (await inStage(page, 5, 'Кухня Альфа')) === 1 && (await inStage(page, 5, 'Шкаф Бета')) === 1);
   const tile = (await page.locator('.kcard[data-key="Кухня Альфа"]').innerText()).replace(/ /g, ' ');
   ok('tile shows money from operations', /приход/.test(tile) && /10 000/.test(tile) && /расход/.test(tile), tile);
@@ -99,8 +99,8 @@ const inStage = (page, stage, name) => page.locator('.kst[data-stage="' + stage 
   const closed = await page.evaluate(() => JSON.parse(JSON.stringify(KCApp.S.meta.projects['Кухня Альфа'])));
   ok('closing keeps CRM fields and sets last stage', closed.status === 'done' && closed.stage === 18 && closed.f.contractNo === 'ДГ-0311' && closed.hist.length >= 2 && !!closed.result, closed);
   await page.click('#pcard button[data-act="pc-close"]');
-  ok('closed project leaves the board', (await page.locator('.kcard[data-key="Кухня Альфа"]').count()) === 0);
-  ok('board counts closed projects', /Закрытых проектов: 1/.test(await page.locator('#projlist').innerText()));
+  ok('closed project stays on the board in the Сдано column', (await inStage(page, 18, 'Кухня Альфа')) === 1 && /закрыт/.test(await page.locator('.kcard[data-key="Кухня Альфа"]').innerText()) && /чистая прибыль/.test(await page.locator('.kcard[data-key="Кухня Альфа"]').innerText()));
+  ok('board counts closed projects', /Закрытые проекты \(1\)/.test(await page.locator('#projlist').innerText()));
   await page.click('button[data-act="projmode"][data-v="list"]');
   ok('list view still shows closed project', (await page.locator('#projlist .op[data-p="Кухня Альфа"] .pill:has-text("завершён")').count()) === 1);
   await page.locator('#projlist .op[data-p="Кухня Альфа"]').click();

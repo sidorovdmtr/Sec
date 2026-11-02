@@ -481,7 +481,7 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
 // ---- CRM: стадии проектов (канбан) ----
 {
   const C = KC.CRM, NOW = '2026-11-02T10:00:00.000Z';
-  eq('crm: 14 stages 5..18', [C.STAGES.length, C.STAGES[0].n, C.STAGES[13].n], [14, 5, 18]);
+  eq('crm: 15 stages 5..19 (last is Рекламации)', [C.STAGES.length, C.STAGES[0].n, C.STAGES[14].n, C.DONE], [15, 5, 19, 18]);
   eq('crm: every stage belongs to a group', C.STAGES.every(s => s.g >= 0 && s.g < C.GROUPS.length), true);
   eq('crm: no meta -> first stage', KC.crmStage(undefined), 5);
   eq('crm: work without stage -> first', KC.crmStage({ status: 'work' }), 5);
@@ -605,6 +605,60 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('backup validates', KC.validateBackup(back), '');
   eq('old backup version 1 still validates', KC.validateBackup(Object.assign({}, back, { version: 1, meta: {} })), '');
   eq('newer backup is refused', KC.validateBackup(Object.assign({}, back, { version: 3 })), 'Копия сделана более новой версией');
+}
+
+// ---- CRM: доделки (рабочие дни, единая карточка проекта, закрытые в «Сдано») ----
+{
+  const NOW = '2026-11-02T10:00:00.000Z';
+  eq('workdays: Monday + 5 -> next Monday', KC.addWorkDays('2026-11-02', 5), '2026-11-09');
+  eq('workdays: Friday + 1 -> Monday', KC.addWorkDays('2026-11-06', 1), '2026-11-09');
+  eq('workdays: Saturday + 1 -> Monday', KC.addWorkDays('2026-11-07', 1), '2026-11-09');
+  eq('workdays: Sunday + 1 -> Monday', KC.addWorkDays('2026-11-08', 1), '2026-11-09');
+  eq('workdays: 35 from Monday -> Monday 7 weeks later', KC.addWorkDays('2026-11-02', 35), '2026-12-21');
+  eq('workdays: 10 spans two weekends', KC.addWorkDays('2026-11-04', 10), '2026-11-18');
+  eq('workdays: 0, negative, junk -> null', [KC.addWorkDays('2026-11-02', 0), KC.addWorkDays('2026-11-02', -3), KC.addWorkDays('', 5), KC.addWorkDays('2026-13-45', 5)], [null, null, null, null]);
+  let a = KC.crmSetField({ status: 'work' }, 'start', '2026-11-02', NOW);
+  eq('due: start alone does not compute it', [a.f.due, KC.crmDueAuto(a)], [undefined, false]);
+  a = KC.crmSetField(a, 'workDays', '5', NOW);
+  eq('due: start + work days computes it', [a.f.due, KC.crmDueAuto(a)], ['2026-11-09', true]);
+  a = KC.crmSetField(a, 'workDays', '10', NOW);
+  eq('due: changing work days recomputes', a.f.due, '2026-11-16');
+  a = KC.crmSetField(a, 'start', '2026-11-09', NOW);
+  eq('due: changing start recomputes', a.f.due, '2026-11-23');
+  eq('due: junk work days keep the last due and turn auto off', (() => { const b = KC.crmSetField(a, 'workDays', 'abc', NOW); return [b.f.due, KC.crmDueAuto(b)]; })(), ['2026-11-23', false]);
+  eq('due: 3.5 is not a whole number of days', KC.crmDueAuto(KC.crmSetField({ f: { start: '2026-11-02' } }, 'workDays', '3.5', NOW)), false);
+  eq('due: old project with only due stays manual', [KC.crmDueAuto({ f: { due: '2026-12-01' } }), KC.crmSetField({ f: { due: '2026-12-01' } }, 'phone', '1', NOW).f.due], [false, '2026-12-01']);
+  eq('due: manual due can be set by the field setter', KC.crmSetField({ f: {} }, 'due', '2026-12-31', NOW).f.due, '2026-12-31');
+  eq('stages: 15, last is Рекламации in the last group', [KC.CRM.STAGES.length, KC.CRM.STAGES[14].name, KC.CRM.STAGES[14].g, KC.CRM.GROUPS.length - 1], [15, 'Рекламации', 3, 3]);
+  eq('stages: no required fields after Сдано or for the undefined ones', [10, 11, 12, 14, 16, 17, 18, 19].map(n => (KC.CRM.REQUIRED[n] || []).length), [0, 0, 0, 0, 0, 0, 0, 0]);
+  eq('stages: closed project is always on Сдано, a reopened one keeps its stage', [KC.crmStage({ status: 'done', stage: 19 }), KC.crmStage({ status: 'work', stage: 19 })], [18, 19]);
+  eq('stages: Сдано -> Рекламации needs nothing', KC.crmMissing({}, 18, 19), []);
+  eq('fields: contract date exists and is not required', [KC.CRM.FIELDS[1].fields.some(f => f[0] === 'contractDate'), KC.CRM.REQUIRED[5].indexOf('contractDate')], [true, -1]);
+  // единая карточка
+  const card = KC.crmNewCard(NOW, 'Карточка создана из операции');
+  eq('card: new card is on the first stage with history', [card.status, card.stage, card.hist[0].t, KC.crmStage(card)], ['work', 5, 'Карточка создана из операции', 5]);
+  const recs = [{ project: 'Кухня Москва' }, { project: 'Кухня Москва' }, { project: 'кухня москва ' }, { project: 'Шкаф' }];
+  eq('match: same project, other spelling -> existing name', KC.findProjectName(recs, {}, '  КУХНЯ   москва'), 'Кухня Москва');
+  eq('match: punctuation and ё are ignored', KC.findProjectName([{ project: 'Шкаф-купе, Орлов' }], {}, 'шкаф купе орлов'), 'Шкаф-купе, Орлов');
+  eq('match: ё equals е', KC.findProjectName([{ project: 'Все сам' }], {}, 'всё сам'), 'Все сам');
+  eq('match: exact name returns itself', KC.findProjectName(recs, {}, 'Шкаф'), 'Шкаф');
+  eq('match: card name wins over operations spelling', KC.findProjectName(recs, { 'КУХНЯ МОСКВА': {} }, 'кухня москва'), 'КУХНЯ МОСКВА');
+  eq('match: a new name is not matched', KC.findProjectName(recs, { 'Другой': {} }, 'Совсем новый'), null);
+  eq('match: empty and symbols only', [KC.findProjectName(recs, {}, ''), KC.findProjectName(recs, {}, ' -- ')], [null, null]);
+  eq('match: deleted operations do not count', KC.findProjectName([{ project: 'Удалён', deleted: true }], {}, 'удалён'), null);
+  eq('suggest: cards without operations are offered', KC.suggestProjectNames([], { 'Мозговой штурм': {}, 'Кухня': {} }, 'моз'), ['Мозговой штурм']);
+  eq('suggest: operations and cards are merged without duplicates', KC.suggestProjectNames([{ project: 'Кухня', date: '2026-10-01', amount: 1 }], { 'Кухня': {}, 'Кладовая': {} }, 'к', 8).sort(), ['Кладовая', 'Кухня']);
+  eq('suggest: no query returns names', KC.suggestProjectNames([], { 'А': {}, 'Б': {} }, '', 8).sort(), ['А', 'Б']);
+  // закрытые проекты на доске
+  const rec = (project, amount) => R({ kind: amount > 0 ? 'income' : 'expense', wallet: 'alfa', amount, date: '2026-10-05', project, article: 'Оказание услуг' });
+  const meta = { 'Закрыт 1': { status: 'done', stage: 18, doneAt: '2026-10-10T00:00:00.000Z', result: { net: 12300 } }, 'Закрыт 2': { status: 'done', stage: 18, doneAt: '2026-10-20T00:00:00.000Z', result: { net: -500 } }, 'В работе': { status: 'work', stage: 18 }, 'Рекл': { status: 'work', stage: 19 } };
+  const bd = KC.crmBoard([rec('Закрыт 1', 100000), rec('В работе', 100000)], meta, { today: '2026-11-02' });
+  const z = (n) => bd.groups.flatMap(g => g.stages).find(s => s.n === n).cards;
+  eq('board: closed projects are cards in Сдано, newest first, then work cards', z(18).map(c => [c.key, c.closed]), [['В работе', false], ['Закрыт 2', true], ['Закрыт 1', true]].sort((x, y) => (x[1] === y[1] ? 0 : x[1] ? 1 : -1)));
+  eq('board: closed cards carry the date and the profit', z(18).filter(c => c.closed).map(c => [c.doneAt.slice(0, 10), c.net]), [['2026-10-20', -500], ['2026-10-10', 12300]]);
+  eq('board: Рекламации zone holds the reopened project', z(19).map(c => c.key), ['Рекл']);
+  eq('board: counters count only open projects, done is counted apart', [bd.total, bd.done, bd.groups[3].count], [2, 2, 2]);
+  eq('board: search finds closed too', KC.crmBoard([], meta, { today: '2026-11-02', query: 'закрыт' }).done, 2);
 }
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

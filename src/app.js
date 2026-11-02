@@ -76,7 +76,7 @@
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
     records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, leads: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    admin: false, projMode: 'board', leadMode: 'funnel', leadQuery: '', lcard: null, artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    admin: false, projMode: 'board', doneAll: false, leadMode: 'funnel', leadQuery: '', lcard: null, artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -114,10 +114,13 @@
     if (S.log.length > 1000) S.log = S.log.slice(-1000);
   }
   function byId(id) { for (var i = 0; i < S.records.length; i++) if (S.records[i].id === id) return S.records[i]; return null; }
+  var madeCards = [];
   function commit(ch, action, summary, recId) {
     var now = KC.nowISO();
-    (ch.newRecords || []).forEach(function (r) { S.records.push(r); S.meta.dirty[r.id] = 1; });
-    (ch.patches || []).forEach(function (p) { var r = byId(p.id); if (r) { Object.assign(r, p.patch, { updatedAt: now }); S.meta.dirty[r.id] = 1; } });
+    madeCards = [];
+    var ensureCard = function (name) { if (name && !S.meta.projects[name]) { S.meta.projects[name] = KC.crmNewCard(now, 'Карточка создана из операции'); madeCards.push(name); } };
+    (ch.newRecords || []).forEach(function (r) { S.records.push(r); S.meta.dirty[r.id] = 1; ensureCard(r.project); });
+    (ch.patches || []).forEach(function (p) { var r = byId(p.id); if (r) { Object.assign(r, p.patch, { updatedAt: now }); S.meta.dirty[r.id] = 1; if (p.patch.project) ensureCard(p.patch.project); } });
     if (action) addLog(action, summary, recId);
     persist();
   }
@@ -577,7 +580,7 @@
   function suggestionsFor(id, text) {
     if (id === 'f-cp') return KC.suggestCounterparties(S.records, text, 6);
     if (id === 'f-art') return KC.suggestCatalog(S.meta.articles, S.records, text, formKind(), 8);
-    if (id === 'f-proj') return KC.suggestProjects(S.records, text, 8);
+    if (id === 'f-proj') return KC.suggestProjectNames(S.records, S.meta.projects, text, 8);
     return [];
   }
   function showSug(id) {
@@ -664,18 +667,21 @@
     var signed = (isNaN(amt) ? 0 : Math.abs(amt)) * (f.type === 'expense' ? -1 : 1);
     errs = KC.validate({ wallet: f.wallet, amount: signed, date: f.date });
     if (errs.length) { f.errors = errs; return renderErrs(); }
-    var fields = { wallet: f.wallet, amount: signed, date: f.date, planned: f.planned, counterparty: f.counterparty.trim(), article: f.article.trim(), project: f.project.trim(), description: f.description.trim(), autofill: f.artSuggested && f.article ? 'suggested' : '' };
+    var pj = f.project.trim(), canon = pj ? KC.findProjectName(S.records, S.meta.projects, pj) : null, canonNote = canon && canon !== pj ? canon : '';
+    if (canonNote) pj = canonNote;
+    var fields = { wallet: f.wallet, amount: signed, date: f.date, planned: f.planned, counterparty: f.counterparty.trim(), article: f.article.trim(), project: pj, description: f.description.trim(), autofill: f.artSuggested && f.article ? 'suggested' : '' };
     if (f.editId) {
       var rec = byId(f.editId), patch = { counterparty: fields.counterparty, article: fields.article, project: fields.project, description: fields.description, planned: fields.planned, autofill: fields.autofill };
       if (!f.locked) { patch.amount = signed; patch.wallet = f.wallet; patch.date = f.date; if (rec.wallet !== f.wallet) patch.bankState = KC.defaultBankState(f.wallet, rec.source); }
       commit({ patches: [{ id: rec.id, patch: patch }] }, 'update', 'Изменена операция ' + money(signed) + (fields.article ? ' (' + fields.article + ')' : ''), rec.id);
-      closeForm(); toast('Изменения сохранены'); return render();
+      closeForm(); toast(saveNote('Изменения сохранены', canonNote)); return render();
     }
     var r = KC.newRecord(fields);
     commit({ newRecords: [r] }, 'create', 'Новая операция ' + money(signed) + (fields.article ? ' (' + fields.article + ')' : ''), r.id);
     if (!S.project && KC.monthKey(r.date) !== S.month) S.month = KC.monthKey(r.date);
-    closeForm(); toast('Сохранено'); render();
+    closeForm(); toast(saveNote('Сохранено', canonNote)); render();
   }
+  function saveNote(base, canonNote) { var t = base; if (canonNote) t += '. Проект записан как в карточке: «' + canonNote + '»'; if (madeCards.length) t += '. Создана карточка проекта «' + madeCards[0] + '» (стадия «' + KC.CRM.STAGES[0].name + '»)'; return t; }
   function renderErrs() { var el = $('#errs'); if (el) el.textContent = S.form.errors.join('. '); }
   function closeForm() { S.form = null; var h = $('#sheet'); if (h) h.remove(); }
   function deleteRec(id) {
@@ -702,19 +708,54 @@
     S.meta.projects[key] = KC.crmSetField(S.meta.projects[key], k, el.value, KC.nowISO());
     var ms = S.pcard.missing || [], i = ms.indexOf(k);
     if (i >= 0 && el.value.trim()) { ms.splice(i, 1); el.classList.remove('bad'); }
+    if (k === 'start' || k === 'workDays') { var pn = S.meta.projects[key], dd = $('#cf-due'); if (dd) { dd.value = KC.crmField(pn, 'due'); dd.disabled = KC.crmDueAuto(pn); } }
     if (cfTimer) clearTimeout(cfTimer);
     cfTimer = setTimeout(function () { cfTimer = null; persist(); }, 500);
   }
-  // перенос проекта на стадию; вперёд только если заполнены обязательные поля всех пройденных стадий (force: без проверки, для прежних проектов)
+
+  // итог проекта и закрытие (вручную из карточки или автоматически при переходе в «Сдано»)
+  function saveProjectResult(key, res, fixed, incomeCount) {
+    var old = S.meta.projects[key] || { status: 'work' }, now = KC.nowISO();
+    var n = Object.assign({}, old, { status: 'done', stage: KC.CRM.DONE, doneAt: now, updatedAt: now, result: { from: res.alloc.from, to: res.alloc.to, fixedArticles: fixed, incomeCount: incomeCount, income: res.income, variable: res.variable, ownIncome: res.alloc.ownIncome, allIncome: res.alloc.allIncome, share: res.alloc.share, fixedTotal: res.alloc.fixedTotal, fixedAllocated: res.alloc.fixedAllocated, net: res.net, netMargin: res.netMargin } });
+    n.hist = [{ at: now, t: 'Проект закрыт: чистая прибыль ' + money(res.net) }].concat(old.hist || []).slice(0, 60);
+    S.meta.projects[key] = n;
+    addLog('project', 'Проект «' + key + '» завершён: чистая прибыль ' + money(res.net) + ', постоянные расходы на заказ ' + money(res.alloc.fixedAllocated), '');
+  }
+  // автоматический расчёт, как при ручном закрытии с «Использовать эти сроки»: период от первого до последнего поступления, в долю входят поступления с проектом
+  function autoCloseProject(key) {
+    var f = KC.projectFinance(S.records, key), from = f.firstPay, to = f.lastPay;
+    if (!from || !to) return { error: 'по проекту нет поступлений' };
+    var ids = KC.periodIncomes(S.records, from, to).filter(function (r) { return r.project; }).map(function (r) { return r.id; });
+    var opts = { from: from, to: to, mode: 'articles', fixedArticles: fixedNames(), incomeIds: ids }, res = KC.projectResult(S.records, key, opts);
+    if (res.alloc.share == null) return { error: 'не удалось рассчитать долю постоянных расходов' };
+    return { res: res, fixed: opts.fixedArticles, count: ids.length };
+  }
+  // перенос проекта на стадию; вперёд только если заполнены обязательные поля всех пройденных стадий (force: без проверки, для прежних проектов).
+  // Переход в «Сдано» закрывает проект в «Деньгах» (итог считается автоматически); выход из «Сдано» возвращает проект в работу.
   function crmMoveTo(key, to, force) {
-    var C = KC.CRM, pm = S.meta.projects[key], from = KC.crmStage(pm);
-    if (!key || to === from || to < C.FIRST || to > C.LAST || (pm && pm.status === 'done')) return { ok: false };
+    var C = KC.CRM, pm = S.meta.projects[key], from = KC.crmStage(pm), wasDone = !!(pm && pm.status === 'done');
+    if (!key || to === from || to < C.FIRST || to > C.LAST) return { ok: false };
     var miss = to > from ? KC.crmMissing(pm, from, to) : [];
     if (miss.length && !force) return { ok: false, missing: miss };
-    S.meta.projects[key] = KC.crmMove(pm, to, KC.nowISO(), miss.length ? 'без проверки полей' : '');
-    addLog('project', 'Проект «' + key + '»: стадия «' + KC.crmStageInfo(from).name + '» → «' + KC.crmStageInfo(to).name + '»' + (miss.length ? ' (без проверки полей)' : ''), '');
+    var prev = pm ? JSON.parse(JSON.stringify(pm)) : KC.crmNewCard(KC.nowISO()), now = KC.nowISO(), out = { ok: true, reopened: wasDone };
+    var base = pm ? Object.assign({}, pm) : null;
+    if (wasDone) { delete base.doneAt; delete base.result; base.status = 'work'; }
+    S.meta.projects[key] = KC.crmMove(base, to, now, miss.length ? 'без проверки полей' : wasDone ? 'проект возвращён в работу' : '');
+    addLog('project', 'Проект «' + key + '»: стадия «' + KC.crmStageInfo(from).name + '» → «' + KC.crmStageInfo(to).name + '»' + (miss.length ? ' (без проверки полей)' : '') + (wasDone ? ', возвращён в работу' : ''), '');
+    if (to === C.DONE) {
+      var ac = autoCloseProject(key);
+      if (ac.res) { saveProjectResult(key, ac.res, ac.fixed, ac.count); out.closed = { net: ac.res.net }; } else out.closeError = ac.error;
+    }
     persist();
-    return { ok: true };
+    out.undo = function () { S.meta.projects[key] = Object.assign({}, prev, { updatedAt: KC.nowISO() }); addLog('project', 'Проект «' + key + '»: перенос отменён', ''); persist(); render(); };
+    return out;
+  }
+  function crmMoveToast(key, to, r) {
+    var nm = KC.crmStageInfo(to).name;
+    if (r.closed) return toast('«' + key + '» в «Сдано»: проект закрыт, чистая прибыль ' + money(r.closed.net), 'Отменить', r.undo);
+    if (r.closeError) return toast('«' + key + '» в «Сдано», но итог не посчитан: ' + r.closeError + '. Закройте проект вручную в карточке.', 'Отменить', r.undo);
+    if (r.reopened) return toast('«' + key + '» возвращён в работу: ' + nm + '. Итог пересчитается при следующем закрытии.', 'Отменить', r.undo);
+    return toast('Стадия: ' + nm);
   }
   function crmDrop(key, to) {
     var r = crmMoveTo(key, to, false);
@@ -722,7 +763,7 @@
       openProjectCard(key); S.pcard.missing = r.missing; renderPCard();
       return toast('Чтобы перенести в «' + KC.crmStageInfo(to).name + '», заполните: ' + r.missing.map(KC.crmFieldLabel).join(', '));
     }
-    if (r.ok) { render(); toast('«' + key + '» → ' + KC.crmStageInfo(to).name); }
+    if (r.ok) { render(); crmMoveToast(key, to, r); }
   }
   function onDragStart(e) {
     var tl = e.target.closest ? e.target.closest('.kcard[data-lead]') : null, t = tl || (e.target.closest ? e.target.closest('.kcard[data-key]') : null); if (!t) return;
@@ -740,6 +781,10 @@
     if (lead) ldDrop(lead, +z.getAttribute('data-lstage')); else crmDrop(key, +z.getAttribute('data-stage'));
   }
   function crmTile(c) {
+    if (c.closed) {
+      return '<button type="button" class="kcard glass" data-act="openproject" data-p="' + esc(c.key) + '" data-key="' + esc(c.key) + '"' + (DESK ? ' draggable="true"' : '') + '><span class="kt">' + esc(c.key) + '</span><span class="tiny mu num">закрыт ' + esc(ruDate(c.doneAt)) + '</span>' +
+        (c.net == null ? '<span class="tiny mu">итог не сохранён</span>' : '<span class="tiny num bold ' + (c.net < 0 ? 'neg' : 'pos') + '">чистая прибыль ' + money(c.net) + '</span>') + '</button>';
+    }
     var late = c.next && c.next < KC.today();
     var note = c.mode === 'none' ? 'Сроки не указаны' : c.mode === 'overdue' ? '<span class="neg bold">Просрочен на ' + c.days + ' раб. дн.</span>' : 'Осталось ' + c.days + ' раб. дн. · ' + c.pct + '%';
     var bar = c.mode === 'none' ? '' : '<span class="track"><span class="fill" style="width:' + c.pct + '%' + (c.mode === 'overdue' ? ';background:var(--neg)' : '') + '"></span></span>';
@@ -753,10 +798,12 @@
     var b = KC.crmBoard(S.records, S.meta.projects, { query: S.projQuery, today: KC.today() });
     var cols = b.groups.map(function (g) {
       return '<section class="kcol" aria-label="' + esc(g.name) + '"><div class="kch"><b>' + esc(g.name) + '</b><span class="pill">' + g.count + '</span></div>' + g.stages.map(function (s) {
-        return '<div class="kst" data-stage="' + s.n + '"><div class="ksh"><span>' + esc(s.name) + '</span><span>' + s.cards.length + '</span></div>' + (s.cards.length ? s.cards.map(crmTile).join('') : '<div class="kempty">пусто' + (DESK ? ', перетащите сюда' : '') + '</div>') + '</div>';
+        var closedAll = s.cards.filter(function (c) { return c.closed; }), hide = !S.doneAll && closedAll.length > 8, shown = hide ? s.cards.filter(function (c) { return !c.closed; }).concat(closedAll.slice(0, 8)) : s.cards;
+        var more = closedAll.length > 8 ? '<button type="button" class="btn" data-act="doneall">' + (S.doneAll ? 'Свернуть закрытые' : 'Показать все закрытые (' + closedAll.length + ')') + '</button>' : '';
+        return '<div class="kst" data-stage="' + s.n + '"><div class="ksh"><span>' + esc(s.name) + '</span><span>' + s.cards.length + '</span></div>' + (shown.length ? shown.map(crmTile).join('') : '<div class="kempty">пусто' + (DESK ? ', перетащите сюда' : '') + '</div>') + more + '</div>';
       }).join('') + '</section>';
     }).join('');
-    return '<div class="kb" id="kb">' + cols + '</div><div class="tiny mu">' + (b.total ? 'В работе: ' + b.total + '. ' : 'Проектов в работе нет. ') + 'Закрытых проектов: ' + b.done + ' (на доске не показываются, они в «Списке» и в финансовом анализе). ' + (DESK ? 'Карточку можно перетащить на другую стадию. ' : 'Стадия меняется кнопками в карточке. ') + 'Проекты без стадии стоят на первой.</div>';
+    return '<div class="kb" id="kb">' + cols + '</div><div class="tiny mu">' + (b.total ? 'В работе: ' + b.total + '. ' : 'Проектов в работе нет. ') + 'Закрытые проекты (' + b.done + ') лежат в колонке «Сдано»; перенос закрытого проекта на другую стадию возвращает его в работу. ' + (DESK ? 'Карточку можно перетащить на другую стадию. ' : 'Стадия меняется кнопками в карточке. ') + 'Проекты без стадии стоят на первой.</div>';
   }
   function crmCardHtml(key, pm) {
     if (!key) return '';
@@ -765,14 +812,14 @@
     var seg = '<div class="seg" aria-hidden="true">' + C.STAGES.map(function (s) { return '<i class="' + (s.n < st ? 'on' : s.n === st ? 'cur' : '') + '"></i>'; }).join('') + '</div>';
     var tm = KC.crmTiming(pm, KC.today());
     var tnote = tm.mode === 'none' ? 'Дата сдачи не указана' : tm.mode === 'overdue' ? '<span class="neg bold">Просрочен на ' + tm.days + ' раб. дн.</span>' : 'До сдачи ' + tm.days + ' раб. дн. · ' + tm.pct + '%';
-    var prev = st > C.FIRST && !done ? '<button type="button" class="btn" data-act="pc-crm-prev">← ' + esc(KC.crmStageInfo(st - 1).name) + '</button>' : '';
-    var next = st < C.LAST && !done ? '<button type="button" class="btn main" data-act="pc-crm-next">' + esc(KC.crmStageInfo(st + 1).name) + ' →</button>' : '';
+    var prev = st > C.FIRST ? '<button type="button" class="btn" data-act="pc-crm-prev">← ' + esc(KC.crmStageInfo(st - 1).name) + '</button>' : '';
+    var next = st < C.LAST ? '<button type="button" class="btn main" data-act="pc-crm-next">' + esc(KC.crmStageInfo(st + 1).name) + ' →</button>' : '';
     var warn = miss.length ? '<div class="banner warn" role="alert">Чтобы перейти дальше, заполните: <b>' + miss.map(function (k) { return esc(KC.crmFieldLabel(k)); }).join(', ') + '</b>.<br><button type="button" class="linkbtn" data-act="pc-crm-force">Перенести без проверки полей (для старых проектов)</button></div>' : '';
-    var head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px"><div class="row between wrap gap8"><div class="bold" style="font-size:16px">Стадия: ' + esc(info.name) + '</div><span class="tiny mu">' + tnote + '</span></div>' + seg + (done ? '<div class="small mu">Проект завершён, стадия «Сдано».</div>' : '<div class="row gap8 wrap">' + prev + next + '</div>') + warn + '</div>';
+    var head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px"><div class="row between wrap gap8"><div class="bold" style="font-size:16px">Стадия: ' + esc(info.name) + '</div><span class="tiny mu">' + tnote + '</span></div>' + seg + (done ? '<div class="small mu">Проект завершён (итог сохранён). Перенос на другую стадию вернёт его в работу, итог пересчитается при следующем закрытии.</div>' : '') + '<div class="row gap8 wrap">' + prev + next + '</div>' + warn + '</div>';
     var secs = C.FIELDS.map(function (sec) {
       return '<div class="glass" style="padding:12px 14px"><div class="bold" style="margin-bottom:8px">' + esc(sec.title) + '</div><div class="cfgrid">' + sec.fields.map(function (fd) {
         var k = fd[0], bad = miss.indexOf(k) >= 0, need = req.indexOf(k) >= 0;
-        return '<label class="cflabel"><span>' + esc(fd[1]) + (need ? ' <span class="' + (bad ? 'neg bold' : '') + '">· нужно для перехода</span>' : '') + '</span><input class="input' + (bad ? ' bad' : '') + '" id="cf-' + k + '" type="' + fd[2] + '" value="' + esc(KC.crmField(pm, k)) + '" autocomplete="off"></label>';
+        return '<label class="cflabel"><span>' + esc(fd[1]) + (need ? ' <span class="' + (bad ? 'neg bold' : '') + '">· нужно для перехода</span>' : '') + '</span><input class="input' + (bad ? ' bad' : '') + '" id="cf-' + k + '" type="' + fd[2] + '" value="' + esc(KC.crmField(pm, k)) + '"' + (k === 'due' && KC.crmDueAuto(pm) ? ' disabled' : '') + ' autocomplete="off"></label>';
       }).join('') + '</div></div>';
     }).join('');
     var hist = (pm.hist || []).slice(0, 8).map(function (x) { return '<div class="small"><span class="mu">' + esc(ruDate(x.at)) + '</span> ' + esc(x.t) + '</div>'; }).join('');
@@ -1015,7 +1062,7 @@
     if (a === 'pc-crm-next' || a === 'pc-crm-prev' || a === 'pc-crm-force') {
       var cur = KC.crmStage(S.meta.projects[key]), to = a === 'pc-crm-prev' ? cur - 1 : cur + 1, rr = crmMoveTo(key, to, a === 'pc-crm-force');
       if (rr.missing) { p.missing = rr.missing; return renderPCard(); }
-      p.missing = []; renderPCard(); render(); return toast('Стадия: ' + KC.crmStageInfo(to).name);
+      p.missing = []; renderPCard(); render(); return crmMoveToast(key, to, rr);
     }
     if (a === 'pc-close') { cfFlush(); S.pcard = null; renderPCard(); if (S.view === 'projects') render(); return; }
     if (a === 'pc-ops') { S.project = key || '__none__'; S.view = 'ops'; S.query = ''; S.pcard = null; renderPCard(); return render(); }
@@ -1036,8 +1083,7 @@
     if (a === 'pc-calc2') { p.step = 'calc'; return renderPCard(); }
     if (a === 'pc-save') {
       var res = KC.projectResult(S.records, key, calcOpts()); if (res.alloc.share == null) return;
-      S.meta.projects[key] = Object.assign({}, S.meta.projects[key], { status: 'done', stage: KC.CRM.LAST, doneAt: KC.nowISO(), updatedAt: KC.nowISO(), result: { from: res.alloc.from, to: res.alloc.to, fixedArticles: fixedNames(), incomeCount: incomeIds().length, income: res.income, variable: res.variable, ownIncome: res.alloc.ownIncome, allIncome: res.alloc.allIncome, share: res.alloc.share, fixedTotal: res.alloc.fixedTotal, fixedAllocated: res.alloc.fixedAllocated, net: res.net, netMargin: res.netMargin } });
-      addLog('project', 'Проект «' + key + '» завершён: чистая прибыль ' + money(res.net) + ', постоянные расходы на заказ ' + money(res.alloc.fixedAllocated), '');
+      saveProjectResult(key, res, fixedNames(), incomeIds().length);
       persist(); p.step = 'view'; renderPCard(); render(); return toast('Итог проекта сохранён');
     }
     if (a === 'pc-reopen') { var po = Object.assign({}, S.meta.projects[key], { status: 'work', updatedAt: KC.nowISO() }); delete po.doneAt; delete po.result; S.meta.projects[key] = po; addLog('project', 'Проект «' + key + '» возвращён в работу'); persist(); renderPCard(); render(); return toast('Проект возвращён в работу'); }
@@ -1396,6 +1442,7 @@
     if (a === 'walletstoggle') { S.walletsOpen = !S.walletsOpen; return render(); }
     if (a === 'newrec') return openForm(null);
     if (a === 'edit') { var rec = byId(t.getAttribute('data-id')); if (rec) openForm(rec); return; }
+    if (a === 'doneall') { S.doneAll = !S.doneAll; return render(); }
     if (a === 'projmode') { S.projMode = t.getAttribute('data-v'); return render(); }
     if (a === 'openproject') return openProjectCard(t.getAttribute('data-p'));
     if (a === 'clearproject') { S.project = ''; return render(); }

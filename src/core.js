@@ -349,20 +349,20 @@
   /* ---------- CRM: стадии проектов (канбан). Данные лежат в meta.projects[название]: stage, f (поля карточки), hist ---------- */
   // Стадии 1–4 (лиды) живут на вкладке «Лиды»; в проектах цепочка начинается с договора. Номера сквозные, как в общей цепочке из 18 стадий.
   var CRM = {
-    FIRST: 5, LAST: 18,
+    FIRST: 5, DONE: 18, LAST: 19,
     GROUPS: ['Договор и проект', 'Закупка и цех', 'Доставка и монтаж', 'Завершение'],
     STAGES: [
       { n: 5, name: 'Договор и предоплата', g: 0 }, { n: 6, name: 'Замер', g: 0 }, { n: 7, name: 'Техзадание', g: 0 }, { n: 8, name: 'Проектирование', g: 0 }, { n: 9, name: 'Согласование проекта', g: 0 },
       { n: 10, name: 'Закупка материалов', g: 1 }, { n: 11, name: 'Производство', g: 1 }, { n: 12, name: 'Доставка в цех', g: 1 }, { n: 13, name: 'Сборка', g: 1 },
       { n: 14, name: 'Доставка', g: 2 }, { n: 15, name: 'Монтаж', g: 2 }, { n: 16, name: 'Доделки', g: 2 },
-      { n: 17, name: 'Нужен отзыв', g: 3 }, { n: 18, name: 'Сдано', g: 3 }
+      { n: 17, name: 'Нужен отзыв', g: 3 }, { n: 18, name: 'Сдано', g: 3 }, { n: 19, name: 'Рекламации', g: 3 }
     ],
     // что нужно заполнить, чтобы уйти с этой стадии вперёд (черновик; остальные переходы без обязательных полей)
     REQUIRED: { 5: ['contractNo', 'sum', 'prepay'], 6: ['measure'], 7: ['tz'], 8: ['projectDoc'], 9: ['estimate'], 13: ['install'], 15: ['act'] },
     FIELDS: [
       { title: 'Клиент', fields: [['client', 'Клиент', 'text'], ['phone', 'Телефон', 'text'], ['address', 'Адрес объекта', 'text'], ['resp', 'Ответственный', 'text']] },
-      { title: 'Договор', fields: [['contractNo', 'Номер договора', 'text'], ['sum', 'Сумма договора, ₽', 'text'], ['prepay', 'Дата предоплаты', 'date']] },
-      { title: 'Сроки', fields: [['start', 'Дата начала', 'date'], ['due', 'Дата сдачи', 'date'], ['workDays', 'Срок изготовления, раб. дней', 'text'], ['measure', 'Дата замера', 'date'], ['install', 'Дата монтажа', 'date'], ['act', 'Акт подписан, дата', 'date']] },
+      { title: 'Договор', fields: [['contractNo', 'Номер договора', 'text'], ['sum', 'Сумма договора, ₽', 'text'], ['prepay', 'Дата предоплаты', 'date'], ['contractDate', 'Дата заключения договора', 'date']] },
+      { title: 'Сроки', fields: [['start', 'Начало изготовления', 'date'], ['workDays', 'Срок изготовления, раб. дней', 'text'], ['due', 'Дата сдачи (считается сама)', 'date'], ['measure', 'Дата замера', 'date'], ['install', 'Дата монтажа', 'date'], ['act', 'Акт подписан, дата', 'date']] },
       { title: 'Документы', fields: [['tz', 'Техзадание (ссылка или «есть»)', 'text'], ['projectDoc', 'Проект (ссылка или «есть»)', 'text'], ['estimate', 'Смета (ссылка или «есть»)', 'text']] },
       { title: 'Контакт', fields: [['next', 'Дата следующего контакта', 'date']] }
     ]
@@ -370,14 +370,48 @@
   function crmStageInfo(n) { for (var i = 0; i < CRM.STAGES.length; i++) if (CRM.STAGES[i].n === n) return CRM.STAGES[i]; return CRM.STAGES[0]; }
   function crmFieldLabel(key) { for (var i = 0; i < CRM.FIELDS.length; i++) for (var j = 0; j < CRM.FIELDS[i].fields.length; j++) if (CRM.FIELDS[i].fields[j][0] === key) return CRM.FIELDS[i].fields[j][1]; return key; }
   // закрытый проект всегда «Сдано»; проект без стадии (все прежние) стоит на первой стадии
-  function crmStage(pm) { if (pm && pm.status === 'done') return CRM.LAST; var s = pm && pm.stage; return s >= CRM.FIRST && s <= CRM.LAST ? s : CRM.FIRST; }
+  function crmStage(pm) { if (pm && pm.status === 'done') return CRM.DONE; var s = pm && pm.stage; return s >= CRM.FIRST && s <= CRM.LAST ? s : CRM.FIRST; }
   function crmField(pm, k) { var v = pm && pm.f ? pm.f[k] : ''; return v == null ? '' : String(v); }
   function crmMissing(pm, from, to) {
     var out = [];
     for (var s = from; s < to; s++) (CRM.REQUIRED[s] || []).forEach(function (k) { if (!crmField(pm, k).trim() && out.indexOf(k) < 0) out.push(k); });
     return out;
   }
-  function crmSetField(pm, key, val, now) { var o = Object.assign({ status: 'work' }, pm); o.f = Object.assign({}, o.f); o.f[key] = val; o.updatedAt = now; return o; }
+  function addWorkDays(startIso, n) {
+    if (!validDate(startIso) || !(n > 0)) return null;
+    var cur = new Date(startIso + 'T00:00:00Z'), left = n;
+    if (isNaN(cur.getTime()) || cur.toISOString().slice(0, 10) !== startIso) return null;
+    while (left > 0) { cur.setUTCDate(cur.getUTCDate() + 1); var d = cur.getUTCDay(); if (d !== 0 && d !== 6) left--; }
+    return cur.toISOString().slice(0, 10);
+  }
+  function crmWorkDays(pm) { var raw = crmField(pm, 'workDays').trim(), n = parseInt(raw, 10); return n > 0 && String(n) === raw ? n : 0; }
+  // дата сдачи рассчитывается, когда указаны начало изготовления и срок в рабочих днях; иначе её вводят руками
+  function crmDueAuto(pm) { return !!addWorkDays(crmField(pm, 'start'), crmWorkDays(pm)); }
+  function crmSetField(pm, key, val, now) {
+    var o = Object.assign({ status: 'work' }, pm); o.f = Object.assign({}, o.f); o.f[key] = val; o.updatedAt = now;
+    if (key === 'start' || key === 'workDays') { var due = addWorkDays(crmField(o, 'start'), crmWorkDays(o)); if (due) o.f.due = due; }
+    return o;
+  }
+  // единая карточка: у каждого проекта из операций есть карточка на первой стадии
+  function crmNewCard(now, note) { return { status: 'work', stage: CRM.FIRST, f: {}, hist: [{ at: now, t: note || 'Карточка создана' }], updatedAt: now }; }
+  function projNorm(name) { return String(name || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/g, ' ').trim(); }
+  // тот же проект, написанный иначе (регистр, пробелы, знаки): возвращает уже существующее название
+  function findProjectName(records, projectsMeta, name) {
+    var n = projNorm(name); if (!n) return null;
+    var byNorm = null, cnt = {}, best = null;
+    var keys = Object.keys(projectsMeta || {});
+    if (keys.indexOf(name) >= 0) return name;
+    keys.forEach(function (k) { if (!byNorm && projNorm(k) === n) byNorm = k; });
+    if (byNorm) return byNorm;
+    (records || []).forEach(function (r) { if (r.project && !r.deleted) cnt[r.project] = (cnt[r.project] || 0) + 1; });
+    if (cnt[name]) return name;
+    Object.keys(cnt).forEach(function (k) { if (projNorm(k) === n && (!best || cnt[k] > cnt[best])) best = k; });
+    return best;
+  }
+  function suggestProjectNames(records, projectsMeta, q, limit) {
+    var pseudo = Object.keys(projectsMeta || {}).filter(Boolean).map(function (k) { return { project: k, date: '', amount: 0 }; });
+    return suggestFrom((records || []).concat(pseudo), function (r) { return r.project; }, q, limit || 8);
+  }
   function crmMove(pm, to, now, note) {
     var o = Object.assign({ status: 'work' }, pm), from = crmStage(o);
     o.stage = to; o.updatedAt = now;
@@ -412,16 +446,16 @@
     Object.keys(keys).forEach(function (k) {
       if (q && k.toLowerCase().indexOf(q) < 0) return;
       var pm = projectsMeta && projectsMeta[k];
-      if (pm && pm.status === 'done') { done++; return; }
-      var f = fin[k] || { income: 0, expense: 0, profit: 0, margin: null }, st = crmStage(pm), card = Object.assign({ key: k, stage: st, income: f.income, expense: f.expense, profit: f.profit, sum: Number(crmField(pm, 'sum')) || 0, next: crmField(pm, 'next'), due: crmField(pm, 'due') }, crmTiming(pm, todayIso));
-      (byStage[st] = byStage[st] || []).push(card); total++;
+      var isDone = !!(pm && pm.status === 'done'); if (isDone) done++;
+      var f = fin[k] || { income: 0, expense: 0, profit: 0, margin: null }, st = crmStage(pm), card = Object.assign({ key: k, stage: st, income: f.income, expense: f.expense, profit: f.profit, sum: Number(crmField(pm, 'sum')) || 0, next: crmField(pm, 'next'), due: crmField(pm, 'due'), closed: isDone, doneAt: isDone ? (pm.doneAt || '') : '', net: isDone && pm.result ? pm.result.net : null }, crmTiming(pm, todayIso));
+      (byStage[st] = byStage[st] || []).push(card); if (!isDone) total++;
     });
     Object.keys(byStage).forEach(function (s) {
-      byStage[s].sort(function (a, b) { if (!a.due !== !b.due) return a.due ? -1 : 1; if (a.due !== b.due) return a.due < b.due ? -1 : 1; return a.key.localeCompare(b.key, 'ru'); });
+      byStage[s].sort(function (a, b) { if (a.closed !== b.closed) return a.closed ? 1 : -1; if (a.closed) return a.doneAt < b.doneAt ? 1 : a.doneAt > b.doneAt ? -1 : a.key.localeCompare(b.key, 'ru'); if (!a.due !== !b.due) return a.due ? -1 : 1; if (a.due !== b.due) return a.due < b.due ? -1 : 1; return a.key.localeCompare(b.key, 'ru'); });
     });
     var groups = CRM.GROUPS.map(function (name, gi) {
       var stages = CRM.STAGES.filter(function (s) { return s.g === gi; }).map(function (s) { return { n: s.n, name: s.name, cards: byStage[s.n] || [] }; });
-      return { name: name, stages: stages, count: stages.reduce(function (a, s) { return a + s.cards.length; }, 0) };
+      return { name: name, stages: stages, count: stages.reduce(function (a, s) { return a + s.cards.filter(function (c) { return !c.closed; }).length; }, 0) };
     });
     return { groups: groups, done: done, total: total };
   }
@@ -938,7 +972,7 @@
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };
