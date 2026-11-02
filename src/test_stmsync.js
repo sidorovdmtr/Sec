@@ -55,7 +55,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
       mk(-5200, 'Комиссия за перевод в рублях по Системе N 324', 'РКО'), mk(-5200, 'Комиссия за перевод в рублях по Системе N 321', 'РКО'), mk(-5200, 'Комиссия за перевод в рублях по Системе N 322', 'РКО')] });
   });
   const bal0 = await page.evaluate(() => KC.balances(KCApp.S.records).total), n0 = await page.evaluate(() => KCApp.S.records.length);
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   // 1. без ссылки: подсказка; неверная ссылка отклоняется
   await page.click('button[data-act="stmsync"]');
   ok('no url: hint', (await toastTxt()).indexOf('режим администратора') >= 0, await toastTxt());
@@ -102,7 +102,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   await page.waitForTimeout(150); await page.reload(); await ready();
   ok('url and files persist', await page.evaluate(() => !!KCApp.S.meta.stmUrl && Object.keys(KCApp.S.meta.stmFiles).length >= 2));
   // диагностика связи: отчёт по обоим способам, без ссылки и ключа
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   await page.click('button[data-act="stmdiag"]'); await page.waitForTimeout(1200);
   const diag = await page.locator('#stmstatus').innerText();
   ok('diag reports both transports', /Обычный запрос: ответ получен/.test(diag) && /Вставка скриптом: ответ получен/.test(diag) && /без отправки адреса/.test(diag), diag);
@@ -111,7 +111,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   folder.push({ id: 'f6', name: 'Выписка_40702810626180001762_02.11.2026.xlsx', size: 7400, modified: '2026-11-03T12:00:00.000Z', buf: book([['Выписка по счёту'], H, ['02.11.2026', '9', '5,000.00', '', 'АО «Новый»', '', '', '', '', '', 'Оплата по счету 9', '', 'Платежное поручение']]) });
   const nBeforeDecline = await page.evaluate(() => KCApp.S.records.length), filesBefore = await page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length);
   declineNext = true; dialogs.length = 0;
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(800);
   ok('preview shows new record and its sum', dialogs.length >= 1 && /Добавить новых записей: 1 \(на сумму/.test(dialogs[0]) && /ВНИМАНИЕ/.test(dialogs[0]), dialogs[0]);
   ok('declined: nothing added, file not remembered', (await page.evaluate(() => KCApp.S.records.length)) === nBeforeDecline && (await page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === filesBefore && (await toastTxt()).indexOf('по вашему отказу') >= 0, await toastTxt());
@@ -119,7 +119,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   ok('asked again and accepted: record added', (await page.evaluate(() => KCApp.S.records.length)) === nBeforeDecline + 1, await toastTxt());
   // ручная загрузка файла: то же окно с цифрами, отказ ничего не вносит и оставляет окно колонок, подтверждение вносит, повтор даёт одни дубли
   const MANUAL = book([['Выписка по счёту'], H, ['03.11.2026', '77', '1,111.00', '', 'АО «Ручной»', '', '', '', '', '', 'Оплата по счету 77', '', 'Платежное поручение']]);
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   const nM = await page.evaluate(() => KCApp.S.records.length); dialogs.length = 0;
   await page.setInputFiles('input[data-stm="alfa"]', { name: 'ручная.xlsx', mimeType: 'application/octet-stream', buffer: MANUAL });
   await page.waitForSelector('button[data-act="runstm"]');
@@ -136,7 +136,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   // 7. Safari блокирует обычный запрос: инструмент переходит на загрузку скриптом-вставкой и всё равно читает выписку
   blockFetch = true;
   folder.push({ id: 'f4', name: 'Выписка_40702810626180001762_01.11.2026.xlsx', size: 7300, modified: '2026-11-04T09:00:00.000Z', buf: ALFA });
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(800);
   const t3 = await toastTxt();
   ok('fallback loads file when fetch is blocked', /Загружено выписок: 1/.test(t3), t3);

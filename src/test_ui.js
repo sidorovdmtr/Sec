@@ -108,7 +108,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   ok('no in-transit block', (await page.locator('text=в пути').count()) === 0);
 
   // 8. выписка Альфы (тест)
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   await page.click('button[data-act="teststm"][data-w="alfa"]');
   const decCount = await page.locator('.dec').count();
   ok('alfa decisions created', decCount >= 1, decCount);

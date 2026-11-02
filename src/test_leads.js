@@ -24,7 +24,7 @@ async function createLead(page, name, phone, source) {
   await page.goto(FILE); await page.waitForFunction(() => window.KCApp);
 
   // меню и пустое состояние
-  ok('nav has five tabs including Лиды', (await page.locator('.nav button').count()) === 5 && (await page.locator('.nav button[data-v="leads"]').innerText()).trim() === 'Лиды');
+  ok('nav has four tabs including Лиды', (await page.locator('.nav button').count()) === 4 && (await page.locator('.nav button[data-v="leads"]').innerText()).trim() === 'Лиды');
   await page.click('.nav button[data-v="leads"]');
   ok('funnel has four stage zones', (await page.locator('#kb .kst[data-lstage]').count()) === 4);
   ok('funnel stage names', (await page.locator('#kb .kcol .kch b').allInnerTexts()).join('|') === 'Новая заявка|Прогрев на встречу|Встреча назначена|После встречи');
@@ -171,7 +171,7 @@ async function createLead(page, name, phone, source) {
   await mp.route(/^https?:/, r => r.abort());
   mp.on('pageerror', e => errors.push(String(e)));
   await mp.goto(FILE); await mp.waitForFunction(() => window.KCApp);
-  ok('phone: five nav buttons fit', await mp.evaluate(() => { const n = [...document.querySelectorAll('.nav button')]; return n.length === 5 && n.every(b => b.getBoundingClientRect().width >= 56) && document.documentElement.scrollWidth <= window.innerWidth + 1; }));
+  ok('phone: four nav buttons fit', await mp.evaluate(() => { const n = [...document.querySelectorAll('.nav button')]; return n.length === 4 && n.every(b => b.getBoundingClientRect().width >= 56) && document.documentElement.scrollWidth <= window.innerWidth + 1; }));
   await mp.click('.nav button[data-v="leads"]');
   await createLead(mp, 'Кухня Попова', '+7 900 000-00-09', 'Сайт');
   await mp.click('#lcard button[data-act="ld-close"]');

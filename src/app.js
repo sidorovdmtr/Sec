@@ -407,8 +407,9 @@
       '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer;border-color:var(--chiponb);color:var(--acclink);font-weight:600">Загрузить выписку (xlsx)<input type="file" accept=".xlsx,.xls,.csv" data-stm="' + id + '" hidden></label>' +
       (S.mode === 'test' && S.admin ? '<button type="button" class="btn" data-act="teststm" data-w="' + id + '">Прогнать тестовую выписку</button>' : '') + '</div>';
   }
-  function viewStatements() {
-    var out = '<div class="row between"><div class="h2" style="margin:0">Выписки и сверка</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
+  function openDecisionsCount() { return S.decisions.filter(function (x) { return !x.resolvedAt; }).length; }
+  function settingsStatements() {
+    var out = '';
     out += syncCard() + stmCard('alfa', 'или вручную из файла') + stmCard('promos', 'или вручную из файла');
     var decs = S.decisions.filter(function (x) { return !x.resolvedAt; }).map(decisionHtml).filter(Boolean);
     out += '<div class="dayh">Нужно ваше решение: ' + decs.length + '</div>' + (decs.length ? decs.join('') : '<div class="glass mu small" style="padding:14px">Всё сверено, решений нет</div>');
@@ -417,7 +418,7 @@
     return out;
   }
 
-  /* ---------- экран: настройки (статьи, данные и копии) ---------- */
+  /* ---------- экран: настройки (статьи, данные и копии, выписки) ---------- */
   function artUsageCount(a, use) { return use[a.name.toLowerCase()] || 0; }
   function artRow(a, use) {
     var pills = '<span class="pill">' + (a.kind === 'income' ? 'приход' : 'расход') + '</span>' + (a.fixed ? '<span class="pill warn">постоянная</span>' : '') + (a.system ? '<span class="pill">системная</span>' : '') + (a.archived ? '<span class="pill">в архиве</span>' : '');
@@ -459,15 +460,14 @@
     return out;
   }
   // режим администратора: показывает служебные настройки; хранится только в памяти, при перезапуске приложения выключается
-  function adminCard() {
-    return '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px;margin-top:12px"><div class="row between"><div><div class="bold">Режим администратора</div><div class="tiny mu">Показывает служебные настройки: импорт сводной, исправление дат, восстановление из копии, сброс тестовой базы, переключатель базы, ссылку скрипта выписок. Выключается при перезапуске.</div></div>' +
-      '<button type="button" class="btn' + (S.admin ? ' main' : '') + '" data-act="adminToggle" role="switch" aria-checked="' + (S.admin ? 'true' : 'false') + '" style="min-width:96px">' + (S.admin ? 'Включён' : 'Выключен') + '</button></div></div>';
-  }
   function setAdmin(v) { S.admin = !!v; render(); }
   function viewSettings() {
-    var out = '<div class="row between"><div class="h2" style="margin:0">Настройки</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
-    out += '<div class="seg glass"><button type="button" class="' + (S.settingsTab === 'articles' ? 'on' : '') + '" data-act="stab" data-v="articles">Статьи</button><button type="button" class="' + (S.settingsTab === 'data' ? 'on' : '') + '" data-act="stab" data-v="data">Данные и копии</button></div>';
-    return out + (S.settingsTab === 'data' ? settingsData() : settingsArticles()) + adminCard();
+    var sw = '<button type="button" class="admsw' + (S.admin ? ' on' : '') + '" data-act="adminToggle" role="switch" aria-checked="' + (S.admin ? 'true' : 'false') + '" aria-label="Режим администратора" title="Режим администратора: показывает служебные функции"><span class="admtrack"><i></i></span><span>Админ</span></button>';
+    var out = '<div class="row between"><div class="h2" style="margin:0">Настройки</div><div class="row gap8">' + sw + '<button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div></div>';
+    if (S.admin) out += '<div class="banner info">Режим администратора включён: видны служебные функции (импорт сводной, исправление дат, восстановление из копии, сброс тестовой базы, переключатель базы, ссылка скрипта выписок). Выключите, когда закончите; при перезапуске он выключается сам.</div>';
+    var nd = openDecisionsCount(), tab = function (v, label) { return '<button type="button" class="' + (S.settingsTab === v ? 'on' : '') + '" data-act="stab" data-v="' + v + '">' + label + '</button>'; };
+    out += '<div class="seg glass">' + tab('articles', 'Статьи') + tab('data', 'Данные и копии') + tab('statements', 'Выписки' + (nd ? ' · ' + nd : '')) + '</div>';
+    return out + (S.settingsTab === 'data' ? settingsData() : S.settingsTab === 'statements' ? settingsStatements() : settingsArticles());
   }
   function openArtSheet(id) {
     var a = id ? S.meta.articles.filter(function (x) { return x.id === id; })[0] : null;
@@ -1342,11 +1342,11 @@
   }
 
   /* ---------- общий рендер и события ---------- */
-  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['statements', 'Выписки', 'stm'], ['settings', 'Настройки', 'gear']];
+  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['settings', 'Настройки', 'gear']];
   function render() {
     document.documentElement.setAttribute('data-theme', S.theme);
-    var body = S.view === 'projects' ? viewProjects() : S.view === 'leads' ? viewLeads() : S.view === 'statements' ? viewStatements() : S.view === 'settings' ? viewSettings() : viewOps();
-    var nav = '<nav class="nav" aria-label="Разделы">' + NAV.map(function (n) { return '<button type="button" class="' + (S.view === n[0] ? 'on' : '') + '" data-act="nav" data-v="' + n[0] + '">' + svg(n[2], 22) + n[1] + '</button>'; }).join('') + '</nav>';
+    var body = S.view === 'projects' ? viewProjects() : S.view === 'leads' ? viewLeads() : S.view === 'settings' ? viewSettings() : viewOps();
+    var nav = '<nav class="nav" aria-label="Разделы">' + NAV.map(function (n) { return '<button type="button" class="' + (S.view === n[0] ? 'on' : '') + '" data-act="nav" data-v="' + n[0] + '">' + svg(n[2], 22) + n[1] + (n[0] === 'settings' && openDecisionsCount() ? '<span class="badge" role="img" aria-label="Нужно решение по выпискам: ' + openDecisionsCount() + '">' + openDecisionsCount() + '</span>' : '') + '</button>'; }).join('') + '</nav>';
     var fab = S.view === 'ops' ? '<button type="button" class="fab" data-act="newrec" aria-label="Новая операция">' + svg('plus', 26) + '</button>' : '';
     var kb0 = $('#kb'), kbl = kb0 ? kb0.scrollLeft : 0;
     $('#root').innerHTML = '<div class="app"><main class="page" id="main">' + body + '</main>' + nav + fab + '</div>';

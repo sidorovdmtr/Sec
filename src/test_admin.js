@@ -16,11 +16,11 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log('ok   ' + name)
 
   // ---- 1. режим администратора: по умолчанию служебное скрыто ----
   await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="data"]');
-  ok('admin off by default: toggle shows off', (await page.locator('button[data-act="adminToggle"]').innerText()).trim() === 'Выключен');
+  ok('admin off by default: switch is off', (await page.locator('button[data-act="adminToggle"]').getAttribute('aria-checked')) === 'false');
   for (const sel of ['button[data-act="datefix"]', '#restorefile', '#summaryfile', 'button[data-act="resetTest"]', 'button[data-act="switchmode"]'])
     ok('hidden without admin: ' + sel, !(await has(sel)));
   ok('backup buttons stay visible', (await has('button[data-act="backup"]')) && (await has('button[data-act="backupxlsx"]')));
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   for (const sel of ['#stm-url', 'button[data-act="stmdiag"]', 'button[data-act="teststm"]', 'button[data-act="stmurlclear"]'])
     ok('statements hidden without admin: ' + sel, !(await has(sel)));
   ok('sync button visible without admin', await has('button[data-act="stmsync"]'));
@@ -29,15 +29,15 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log('ok   ' + name)
   await page.click('.nav button[data-v="settings"]');
   await page.click('button[data-act="adminToggle"]');
   await page.click('button[data-act="stab"][data-v="data"]');
-  ok('admin on: toggle shows on', (await page.locator('button[data-act="adminToggle"]').innerText()).trim() === 'Включён');
+  ok('admin on: switch is on', (await page.locator('button[data-act="adminToggle"]').getAttribute('aria-checked')) === 'true');
   for (const sel of ['button[data-act="datefix"]', '#restorefile', '#summaryfile', 'button[data-act="resetTest"]'])
     ok('visible with admin: ' + sel, await has(sel));
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   ok('statements admin: url field visible', await has('#stm-url'));
   // ---- сбрасывается при перезапуске ----
   await page.waitForTimeout(150); await page.reload(); await ready();
   await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="data"]');
-  ok('admin resets after restart', (await page.locator('button[data-act="adminToggle"]').innerText()).trim() === 'Выключен' && !(await has('button[data-act="datefix"]')));
+  ok('admin resets after restart', (await page.locator('button[data-act="adminToggle"]').getAttribute('aria-checked')) === 'false' && !(await has('button[data-act="datefix"]')));
 
   // ---- список статей и журнал свёрнуты, раскрываются по нажатию ----
   await page.evaluate(() => { KCApp.commit({}, 'create', 'Проверка журнала'); });
