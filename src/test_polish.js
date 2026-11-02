@@ -144,8 +144,34 @@ const toastText = async (page) => ((await page.locator('#toast').innerText().cat
   ok('without a project no card is created', await page.evaluate(() => { const n = Object.keys(KCApp.S.meta.projects).length; KCApp.commit({ newRecords: [KC.newRecord({ kind: 'expense', wallet: 'cash', amount: -100, date: '2026-10-06', article: 'Закупка материала' })] }, 'create', 'без проекта'); return Object.keys(KCApp.S.meta.projects).length === n && !KCApp.S.meta.projects['']; }));
   ok('cards of operations survive reload', await (async () => { await page.waitForTimeout(700); await page.reload(); await page.waitForFunction(() => window.KCApp); return await page.evaluate(() => !!KCApp.S.meta.projects['Кухня Москва'] && KCApp.S.meta.projects['Кухня Москва'].stage === 5); })());
 
+  await ctx.close();
+
+  // ---------- карточки на телефоне: поля не выходят за карточку (в том числе поля даты) ----------
+  for (const w of [390, 360]) {
+    const mctx = await browser.newContext({ viewport: { width: w, height: 800 }, isMobile: true, hasTouch: true });
+    const mp = await mctx.newPage();
+    await mp.route(/^https?:/, r => r.abort());
+    mp.on('pageerror', e => errors.push(String(e)));
+    await mp.goto(FILE); await mp.waitForFunction(() => window.KCApp);
+    await mp.evaluate(() => {
+      KCApp.commit({ newRecords: [KC.newRecord({ kind: 'income', wallet: 'alfa', amount: 100000, date: '2026-10-05', project: 'Кухня Телефон', article: 'Оказание услуг' })] }, 'create', 'seed');
+      const m = KCApp.S.meta.projects; m['Кухня Телефон'] = Object.assign({}, m['Кухня Телефон'], { f: { start: '2026-09-18', workDays: '35', due: '2026-11-06', prepay: '2026-09-18', contractNo: 'ДГ-0290', sum: '540000', next: '2026-11-05' } });
+      const l = KC.newLead('Заявка Телефон', { phone: '+7 900 000-00-00', next: '2026-11-05' }, new Date().toISOString()); KCApp.S.meta.leads[l.id] = l; KCApp.render();
+    });
+    const overflow = (pg, root) => pg.evaluate((r) => [...document.querySelectorAll(r + ' .cfgrid input')].filter(i => { const c = i.closest('.glass').getBoundingClientRect(), b = i.getBoundingClientRect(); return b.right > c.right + 0.5 || b.left < c.left - 0.5; }).map(i => i.id), root);
+    await mp.click('.nav button[data-v="projects"]'); await mp.locator('.kcard[data-key="Кухня Телефон"]').click();
+    ok('phone ' + w + ': project card inputs stay inside their cards', (await overflow(mp, '#pcard')).length === 0, await overflow(mp, '#pcard'));
+    ok('phone ' + w + ': project card has no sideways scroll', await mp.evaluate(() => { const sh = document.querySelector('#pcard .sheet'); return sh.scrollWidth <= sh.clientWidth + 1; }));
+    ok('phone ' + w + ': date fields are left aligned, not shrunk to nothing and iOS native look is reset', await mp.evaluate(() => { const i = document.getElementById('cf-prepay'), cs = getComputedStyle(i); return cs.textAlign === 'left' && (cs.appearance === 'none' || cs.webkitAppearance === 'none') && i.getBoundingClientRect().height >= 44 && i.getBoundingClientRect().width > 150; }));
+    await mp.click('#pcard button[data-act="pc-close"]');
+    await mp.click('.nav button[data-v="leads"]'); await mp.locator('.kcard[data-lead]').click();
+    ok('phone ' + w + ': lead card inputs stay inside their cards', (await overflow(mp, '#lcard')).length === 0, await overflow(mp, '#lcard'));
+    ok('phone ' + w + ': lead card has no sideways scroll', await mp.evaluate(() => { const sh = document.querySelector('#lcard .sheet'); return sh.scrollWidth <= sh.clientWidth + 1; }));
+    await mctx.close();
+  }
+
   ok('no js errors', errors.length === 0, errors);
-  await ctx.close(); await browser.close();
+  await browser.close();
   console.log(pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

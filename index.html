@@ -167,6 +167,12 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
 .admsw.on .admtrack i{transform:translateX(16px);background:#fff}
 .admsw:focus-visible{outline:2px solid var(--chiponb);outline-offset:2px;border-radius:12px}
 @media (prefers-reduced-motion:reduce){.admsw .admtrack,.admsw .admtrack i{transition:none}}
+/* поля даты на iPhone: не шире карточки, текст слева, высота как у остальных полей */
+input[type=date].input,.cflabel input{min-width:0;max-width:100%;width:100%;box-sizing:border-box}
+input[type=date].input{-webkit-appearance:none;appearance:none;display:block;text-align:left;line-height:normal;min-height:44px;padding-top:0;padding-bottom:0}
+input[type=date].input::-webkit-date-and-time-value{text-align:left;margin:0;min-height:1.2em}
+input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
+.cflabel{overflow:hidden}
 
 </style>
 </head>
