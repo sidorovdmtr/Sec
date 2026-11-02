@@ -407,8 +407,9 @@
       '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer;border-color:var(--chiponb);color:var(--acclink);font-weight:600">Загрузить выписку (xlsx)<input type="file" accept=".xlsx,.xls,.csv" data-stm="' + id + '" hidden></label>' +
       (S.mode === 'test' && S.admin ? '<button type="button" class="btn" data-act="teststm" data-w="' + id + '">Прогнать тестовую выписку</button>' : '') + '</div>';
   }
-  function viewStatements() {
-    var out = '<div class="row between"><div class="h2" style="margin:0">Выписки и сверка</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
+  function openDecisionsCount() { return S.decisions.filter(function (x) { return !x.resolvedAt; }).length; }
+  function settingsStatements() {
+    var out = '';
     out += syncCard() + stmCard('alfa', 'или вручную из файла') + stmCard('promos', 'или вручную из файла');
     var decs = S.decisions.filter(function (x) { return !x.resolvedAt; }).map(decisionHtml).filter(Boolean);
     out += '<div class="dayh">Нужно ваше решение: ' + decs.length + '</div>' + (decs.length ? decs.join('') : '<div class="glass mu small" style="padding:14px">Всё сверено, решений нет</div>');
@@ -417,7 +418,7 @@
     return out;
   }
 
-  /* ---------- экран: настройки (статьи, данные и копии) ---------- */
+  /* ---------- экран: настройки (статьи, данные и копии, выписки) ---------- */
   function artUsageCount(a, use) { return use[a.name.toLowerCase()] || 0; }
   function artRow(a, use) {
     var pills = '<span class="pill">' + (a.kind === 'income' ? 'приход' : 'расход') + '</span>' + (a.fixed ? '<span class="pill warn">постоянная</span>' : '') + (a.system ? '<span class="pill">системная</span>' : '') + (a.archived ? '<span class="pill">в архиве</span>' : '');
@@ -466,8 +467,9 @@
   function setAdmin(v) { S.admin = !!v; render(); }
   function viewSettings() {
     var out = '<div class="row between"><div class="h2" style="margin:0">Настройки</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
-    out += '<div class="seg glass"><button type="button" class="' + (S.settingsTab === 'articles' ? 'on' : '') + '" data-act="stab" data-v="articles">Статьи</button><button type="button" class="' + (S.settingsTab === 'data' ? 'on' : '') + '" data-act="stab" data-v="data">Данные и копии</button></div>';
-    return out + (S.settingsTab === 'data' ? settingsData() : settingsArticles()) + adminCard();
+    var nd = openDecisionsCount(), tab = function (v, label) { return '<button type="button" class="' + (S.settingsTab === v ? 'on' : '') + '" data-act="stab" data-v="' + v + '">' + label + '</button>'; };
+    out += '<div class="seg glass">' + tab('articles', 'Статьи') + tab('data', 'Данные и копии') + tab('statements', 'Выписки' + (nd ? ' · ' + nd : '')) + '</div>';
+    return out + (S.settingsTab === 'data' ? settingsData() : S.settingsTab === 'statements' ? settingsStatements() : settingsArticles()) + adminCard();
   }
   function openArtSheet(id) {
     var a = id ? S.meta.articles.filter(function (x) { return x.id === id; })[0] : null;
@@ -1342,11 +1344,11 @@
   }
 
   /* ---------- общий рендер и события ---------- */
-  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['statements', 'Выписки', 'stm'], ['settings', 'Настройки', 'gear']];
+  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['settings', 'Настройки', 'gear']];
   function render() {
     document.documentElement.setAttribute('data-theme', S.theme);
-    var body = S.view === 'projects' ? viewProjects() : S.view === 'leads' ? viewLeads() : S.view === 'statements' ? viewStatements() : S.view === 'settings' ? viewSettings() : viewOps();
-    var nav = '<nav class="nav" aria-label="Разделы">' + NAV.map(function (n) { return '<button type="button" class="' + (S.view === n[0] ? 'on' : '') + '" data-act="nav" data-v="' + n[0] + '">' + svg(n[2], 22) + n[1] + '</button>'; }).join('') + '</nav>';
+    var body = S.view === 'projects' ? viewProjects() : S.view === 'leads' ? viewLeads() : S.view === 'settings' ? viewSettings() : viewOps();
+    var nav = '<nav class="nav" aria-label="Разделы">' + NAV.map(function (n) { return '<button type="button" class="' + (S.view === n[0] ? 'on' : '') + '" data-act="nav" data-v="' + n[0] + '">' + svg(n[2], 22) + n[1] + (n[0] === 'settings' && openDecisionsCount() ? '<span class="badge" role="img" aria-label="Нужно решение по выпискам: ' + openDecisionsCount() + '">' + openDecisionsCount() + '</span>' : '') + '</button>'; }).join('') + '</nav>';
     var fab = S.view === 'ops' ? '<button type="button" class="fab" data-act="newrec" aria-label="Новая операция">' + svg('plus', 26) + '</button>' : '';
     var kb0 = $('#kb'), kbl = kb0 ? kb0.scrollLeft : 0;
     $('#root').innerHTML = '<div class="app"><main class="page" id="main">' + body + '</main>' + nav + fab + '</div>';

@@ -20,7 +20,7 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log('ok   ' + name)
   for (const sel of ['button[data-act="datefix"]', '#restorefile', '#summaryfile', 'button[data-act="resetTest"]', 'button[data-act="switchmode"]'])
     ok('hidden without admin: ' + sel, !(await has(sel)));
   ok('backup buttons stay visible', (await has('button[data-act="backup"]')) && (await has('button[data-act="backupxlsx"]')));
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   for (const sel of ['#stm-url', 'button[data-act="stmdiag"]', 'button[data-act="teststm"]', 'button[data-act="stmurlclear"]'])
     ok('statements hidden without admin: ' + sel, !(await has(sel)));
   ok('sync button visible without admin', await has('button[data-act="stmsync"]'));
@@ -32,7 +32,7 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log('ok   ' + name)
   ok('admin on: toggle shows on', (await page.locator('button[data-act="adminToggle"]').innerText()).trim() === 'Включён');
   for (const sel of ['button[data-act="datefix"]', '#restorefile', '#summaryfile', 'button[data-act="resetTest"]'])
     ok('visible with admin: ' + sel, await has(sel));
-  await page.click('.nav button[data-v="statements"]');
+  await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="statements"]');
   ok('statements admin: url field visible', await has('#stm-url'));
   // ---- сбрасывается при перезапуске ----
   await page.waitForTimeout(150); await page.reload(); await ready();

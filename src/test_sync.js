@@ -106,13 +106,13 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   ok('A sees the lead won and the project created on B', aSees.lead === 'won' && aSees.key === 'Облачный проект' && aSees.stage === 5 && aSees.phone === '+7 900 000-00-01' && aSees.fromLead === 'Облачная заявка', aSees);
 
   // 5. решения по выписке: A загружает тестовую выписку, B решает, A видит
-  await A.page.click('.nav button[data-v="statements"]');
+  await A.page.click('.nav button[data-v="settings"]'); await A.page.click('button[data-act="stab"][data-v="statements"]');
   await A.page.click('button[data-act="teststm"][data-w="alfa"]'); await settle(A.page);
   const open = await A.page.evaluate(() => KCApp.S.decisions.filter(d => !d.resolvedAt).length);
   ok('A has open decisions', open >= 1, open);
   await B.page.reload(); await settle(B.page);
   ok('B sees same open decisions', (await B.page.evaluate(() => KCApp.S.decisions.filter(d => !d.resolvedAt).length)) === open);
-  await B.page.click('.nav button[data-v="statements"]');
+  await B.page.click('.nav button[data-v="settings"]'); await B.page.click('button[data-act="stab"][data-v="statements"]');
   await B.page.locator('.dec button[data-act="resolve"]').first().click(); await settle(B.page);
   await A.page.reload(); await settle(A.page);
   ok('A sees decision resolved on B', (await A.page.evaluate(() => KCApp.S.decisions.filter(d => !d.resolvedAt).length)) === open - 1);
@@ -126,11 +126,11 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   ok('devices converge', (await sig(A.page)) === (await sig(B.page)), [await sig(A.page), await sig(B.page)]);
   // 8. ссылка скрипта выписок: A сохраняет, B получает; B удаляет, и удаление доходит до A и не возвращается из облака
   const URLX = 'https://script.google.com/macros/s/TEST/exec?key=abc';
-  await A.page.click('.nav button[data-v="statements"]');
+  await A.page.click('.nav button[data-v="settings"]'); await A.page.click('button[data-act="stab"][data-v="statements"]');
   await A.page.fill('#stm-url', URLX); await A.page.click('button[data-act="stmurlsave"]'); await settle(A.page);
   await B.page.reload(); await settle(B.page);
   ok('B got script url from cloud', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === URLX);
-  await B.page.click('.nav button[data-v="statements"]'); await B.page.click('button[data-act="stmurlclear"]'); await settle(B.page);
+  await B.page.click('.nav button[data-v="settings"]'); await B.page.click('button[data-act="stab"][data-v="statements"]'); await B.page.click('button[data-act="stmurlclear"]'); await settle(B.page);
   ok('B cleared url and sync did not bring it back', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
   await B.page.reload(); await settle(B.page);
   ok('B url still empty after reload', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
@@ -138,7 +138,7 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   ok('A got the deletion', (await A.page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
   // можно вставить новую ссылку, она тоже расходится
   const URL2 = 'https://script.google.com/macros/s/NEW/exec?key=xyz';
-  await A.page.click('.nav button[data-v="statements"]'); await A.page.fill('#stm-url', URL2); await A.page.click('button[data-act="stmurlsave"]'); await settle(A.page);
+  await A.page.click('.nav button[data-v="settings"]'); await A.page.click('button[data-act="stab"][data-v="statements"]'); await A.page.fill('#stm-url', URL2); await A.page.click('button[data-act="stmurlsave"]'); await settle(A.page);
   await B.page.reload(); await settle(B.page);
   ok('new url reaches B', (await B.page.evaluate(() => KCApp.S.meta.stmUrl)) === URL2);
   // 9. сброс тестовой базы чистит и облако; записи не возвращаются; ссылка скрипта остаётся, список прочитанных файлов очищается
