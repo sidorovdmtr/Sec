@@ -39,6 +39,25 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log('ok   ' + name)
   await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="data"]');
   ok('admin resets after restart', (await page.locator('button[data-act="adminToggle"]').innerText()).trim() === 'Выключен' && !(await has('button[data-act="datefix"]')));
 
+  // ---- список статей и журнал свёрнуты, раскрываются по нажатию ----
+  await page.evaluate(() => { KCApp.commit({}, 'create', 'Проверка журнала'); });
+  await page.click('.nav button[data-v="settings"]');
+  await page.click('button[data-act="stab"][data-v="articles"]');
+  ok('articles list collapsed by default', (await has('button[data-act="artListToggle"]')) && (await page.locator('.list button[data-act="art-open"]').count()) === 0);
+  ok('articles header and add button stay visible', (await page.locator('text=Справочник статей').count()) > 0);
+  await page.click('button[data-act="artListToggle"]');
+  ok('articles list expands on demand', (await page.locator('.list button[data-act="art-open"]').count()) > 0 && (await page.locator('button[data-act="artListToggle"]').innerText()).trim() === 'Свернуть');
+  await page.click('button[data-act="artListToggle"]');
+  ok('articles list collapses again', (await page.locator('.list button[data-act="art-open"]').count()) === 0);
+  await page.click('button[data-act="stab"][data-v="data"]');
+  ok('journal collapsed by default', (await has('button[data-act="logToggle"]')) && (await page.locator('table.tb').count()) === 0);
+  await page.click('button[data-act="logToggle"]');
+  ok('journal expands on demand', (await page.locator('table.tb tr').count()) >= 1);
+  await page.click('button[data-act="logToggle"]');
+  ok('journal collapses again', (await page.locator('table.tb').count()) === 0);
+  await page.click('button[data-act="logToggle"]'); await page.click('.nav button[data-v="ops"]'); await page.click('.nav button[data-v="settings"]'); await page.click('button[data-act="stab"][data-v="data"]');
+  ok('collapsed again after re-entering settings', (await page.locator('table.tb').count()) === 0);
+
   // ---- 2. финансовый анализ закрытых проектов ----
   const t = await page.evaluate(() => KC.today());
   const ranges = await page.evaluate(() => ({ m: KC.periodRange('month'), pm: KC.periodRange('prevmonth'), y: KC.periodRange('year'), py: KC.periodRange('prevyear') }));

@@ -229,7 +229,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   await page.click('button[data-act="closeform"]');
 
   // 10c. настройки: справочник статей
-  await page.click('.nav button[data-v="settings"]');
+  await page.click('.nav button[data-v="settings"]'); await page.evaluate(() => { KCApp.S.artListOpen = true; KCApp.S.logOpen = true; KCApp.render(); });
   ok('settings opens on articles tab', (await page.locator('text=Справочник статей').count()) >= 1 && (await page.locator('button[data-act="art-open"]').count()) > 10);
   ok('articles grouped by activity', (await page.locator('.dayh:has-text("Операционная")').count()) === 1 && (await page.locator('.dayh:has-text("Инвестиционная")').count()) === 1 && (await page.locator('.dayh:has-text("Финансовая")').count()) === 1);
   await page.click('button[data-act="art-open"][data-id=""]');
@@ -273,7 +273,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   await page.waitForTimeout(150); await page.reload(); await page.waitForFunction(() => window.KCApp); await page.evaluate(() => KCApp.setAdmin(true));
   const fromTable = await page.evaluate(() => KCApp.S.meta.articles.find(a => a.name === 'Статья из таблицы'));
   ok('unknown article added to catalog with undefined activity', fromTable && fromTable.activity === 'none' && fromTable.kind === 'expense', fromTable);
-  await page.click('.nav button[data-v="settings"]');
+  await page.click('.nav button[data-v="settings"]'); await page.evaluate(() => { KCApp.S.artListOpen = true; KCApp.S.logOpen = true; KCApp.render(); });
   ok('warning about undefined activity', (await page.locator('.banner:has-text("Не указан вид деятельности")').count()) === 1);
 
   // 11. редактирование, удаление и отмена
@@ -291,7 +291,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   ok('undo restores', live2 === live0, [live0, live2]);
 
   // 12. копия
-  await page.click('.nav button[data-v="settings"]');
+  await page.click('.nav button[data-v="settings"]'); await page.evaluate(() => { KCApp.S.artListOpen = true; KCApp.S.logOpen = true; KCApp.render(); });
   await page.click('button[data-act="stab"][data-v="data"]');
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('button[data-act="backup"]')]);
   const p = await dl.path(); const fs = require('fs'); const json = JSON.parse(fs.readFileSync(p, 'utf8'));
