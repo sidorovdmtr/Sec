@@ -33,7 +33,24 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log('ok   ' + name)
     ok(label + ': both wallet cards are there', (await has('text=Альфа')) && (await has('text=Промос')));
     ok(label + ': decisions block says all clear', (await has('text=Нужно ваше решение: 0')) && (await has('text=Всё сверено, решений нет')));
     ok(label + ': only one theme button on the page', (await page.locator('button[data-act="theme"]').count()) === 1);
-    ok(label + ': admin card still at the bottom', await has('button[data-act="adminToggle"]'));
+    // ползунок режима администратора: в шапке, один на странице, на всех трёх вкладках, внизу карточки нет
+    for (const tb of ['articles', 'data', 'statements']) {
+      await page.click('button[data-act="stab"][data-v="' + tb + '"]');
+      const sw = page.locator('button[data-act="adminToggle"]');
+      const sb = await sw.boundingBox(), tabsBox = await page.locator('.seg.glass').first().boundingBox(), title = await page.locator('.h2').first().boundingBox(), theme = await page.locator('button[data-act="theme"]').boundingBox();
+      ok(label + ': [' + tb + '] exactly one admin switch', (await sw.count()) === 1);
+      ok(label + ': [' + tb + '] switch sits in the header between title and theme button', sb.y < tabsBox.y && Math.abs(sb.y - title.y) < 40 && sb.x > title.x + title.width - 2 && sb.x + sb.width <= theme.x + 2, [sb, title, theme]);
+      ok(label + ': [' + tb + '] switch is a labelled control with a big enough target', (await sw.getAttribute('role')) === 'switch' && /Админ/.test(await sw.innerText()) && sb.height >= 44);
+      ok(label + ': [' + tb + '] no admin card at the bottom', (await page.locator('text=Показывает служебные настройки').count()) === 0);
+    }
+    await page.click('button[data-act="stab"][data-v="data"]');
+    ok(label + ': service buttons hidden while admin is off', !(await has('button[data-act="datefix"]')) && !(await has('#restorefile')) && !(await has('.banner.info:has-text("Режим администратора включён")')));
+    await page.click('button[data-act="adminToggle"]');
+    ok(label + ': switch on shows service buttons and the hint', (await page.locator('button[data-act="adminToggle"]').getAttribute('aria-checked')) === 'true' && (await has('button[data-act="datefix"]')) && (await has('.banner.info:has-text("Режим администратора включён")')));
+    await page.click('button[data-act="stab"][data-v="statements"]');
+    ok(label + ': admin state is kept across tabs', (await page.locator('button[data-act="adminToggle"]').getAttribute('aria-checked')) === 'true' && (await has('#stm-url')));
+    await page.click('button[data-act="adminToggle"]');
+    ok(label + ': switch off hides service buttons again', (await page.locator('button[data-act="adminToggle"]').getAttribute('aria-checked')) === 'false' && !(await has('#stm-url')) && !(await has('.banner.info:has-text("Режим администратора включён")')));
     ok(label + ': no badge without open decisions', !(await has('.nav .badge')) && (await page.locator('button[data-act="stab"][data-v="statements"]').innerText()).trim() === 'Выписки');
 
     await page.click('button[data-act="stab"][data-v="data"]');

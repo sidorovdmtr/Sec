@@ -460,16 +460,14 @@
     return out;
   }
   // режим администратора: показывает служебные настройки; хранится только в памяти, при перезапуске приложения выключается
-  function adminCard() {
-    return '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px;margin-top:12px"><div class="row between"><div><div class="bold">Режим администратора</div><div class="tiny mu">Показывает служебные настройки: импорт сводной, исправление дат, восстановление из копии, сброс тестовой базы, переключатель базы, ссылку скрипта выписок. Выключается при перезапуске.</div></div>' +
-      '<button type="button" class="btn' + (S.admin ? ' main' : '') + '" data-act="adminToggle" role="switch" aria-checked="' + (S.admin ? 'true' : 'false') + '" style="min-width:96px">' + (S.admin ? 'Включён' : 'Выключен') + '</button></div></div>';
-  }
   function setAdmin(v) { S.admin = !!v; render(); }
   function viewSettings() {
-    var out = '<div class="row between"><div class="h2" style="margin:0">Настройки</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
+    var sw = '<button type="button" class="admsw' + (S.admin ? ' on' : '') + '" data-act="adminToggle" role="switch" aria-checked="' + (S.admin ? 'true' : 'false') + '" aria-label="Режим администратора" title="Режим администратора: показывает служебные функции"><span class="admtrack"><i></i></span><span>Админ</span></button>';
+    var out = '<div class="row between"><div class="h2" style="margin:0">Настройки</div><div class="row gap8">' + sw + '<button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div></div>';
+    if (S.admin) out += '<div class="banner info">Режим администратора включён: видны служебные функции (импорт сводной, исправление дат, восстановление из копии, сброс тестовой базы, переключатель базы, ссылка скрипта выписок). Выключите, когда закончите; при перезапуске он выключается сам.</div>';
     var nd = openDecisionsCount(), tab = function (v, label) { return '<button type="button" class="' + (S.settingsTab === v ? 'on' : '') + '" data-act="stab" data-v="' + v + '">' + label + '</button>'; };
     out += '<div class="seg glass">' + tab('articles', 'Статьи') + tab('data', 'Данные и копии') + tab('statements', 'Выписки' + (nd ? ' · ' + nd : '')) + '</div>';
-    return out + (S.settingsTab === 'data' ? settingsData() : S.settingsTab === 'statements' ? settingsStatements() : settingsArticles()) + adminCard();
+    return out + (S.settingsTab === 'data' ? settingsData() : S.settingsTab === 'statements' ? settingsStatements() : settingsArticles());
   }
   function openArtSheet(id) {
     var a = id ? S.meta.articles.filter(function (x) { return x.id === id; })[0] : null;
