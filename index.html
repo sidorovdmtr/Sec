@@ -168,11 +168,15 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
 .admsw:focus-visible{outline:2px solid var(--chiponb);outline-offset:2px;border-radius:12px}
 @media (prefers-reduced-motion:reduce){.admsw .admtrack,.admsw .admtrack i{transition:none}}
 /* поля даты на iPhone: не шире карточки, текст слева, высота как у остальных полей */
-input[type=date].input,.cflabel input{min-width:0;max-width:100%;width:100%;box-sizing:border-box}
+input[type=date].input,.cflabel input,.cflabel textarea,.cflabel select{min-width:0;max-width:100%;width:100%;box-sizing:border-box}
 input[type=date].input{-webkit-appearance:none;appearance:none;display:block;text-align:left;line-height:normal;min-height:44px;padding-top:0;padding-bottom:0}
 input[type=date].input::-webkit-date-and-time-value{text-align:left;margin:0;min-height:1.2em}
 input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
 .cflabel{overflow:hidden}
+textarea.input{height:auto;min-height:64px;padding:10px 12px;resize:vertical;line-height:1.35}
+input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display:block;text-align:left;line-height:normal;min-height:44px;padding-top:0;padding-bottom:0}
+.tkrow{align-items:center}.tkdone .t{text-decoration:line-through;color:var(--mu)}.tkmeta{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;white-space:normal}
+.tkalarm{display:inline-flex;align-items:center;color:var(--warntx);flex:none}
 
 </style>
 </head>
@@ -719,6 +723,78 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     later.sort(byNext); lost.sort(function (a, b) { return a.updatedAt < b.updatedAt ? 1 : -1; });
     return { stages: stages, later: later, lost: lost, won: won, total: total };
   }
+  /* ---------- CRM: задачи. Данные: meta.tasks[id]; задача привязана к карточке проекта (key = название) или лида (key = id) ---------- */
+  var TASKS = {
+    ZONES: [{ id: 'none', name: 'Не распределены' }, { id: 'shop', name: 'Цех' }, { id: 'office', name: 'Офис' }, { id: 'director', name: 'Директор' }],
+    DEFAULT_ZONE: 'none'
+  };
+  function taskZone(id) { for (var i = 0; i < TASKS.ZONES.length; i++) if (TASKS.ZONES[i].id === id) return TASKS.ZONES[i]; return TASKS.ZONES[0]; }
+  function taskPush(o, text, now) { o.hist = [{ at: now, t: text }].concat(o.hist || []).slice(0, 40); }
+  function nowLocal() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+  function newTask(title, o, now) {
+    o = o || {};
+    var t = { id: uid(), title: String(title || '').trim(), desc: o.desc || '', zone: taskZone(o.zone).id, due: o.due || '', remind: o.remind || '', comment: o.comment || '', status: 'open', doneAt: '', hist: [], createdAt: now, updatedAt: now };
+    if (o.ownerType === 'project' || o.ownerType === 'lead') { t.ownerType = o.ownerType; t.ownerKey = String(o.ownerKey || ''); } else { t.ownerType = ''; t.ownerKey = ''; }
+    taskPush(t, 'Задача создана', now); return t;
+  }
+  function taskSet(t, k, v, now) {
+    var o = Object.assign({}, t);
+    if (k === 'zone') o.zone = taskZone(v).id; else o[k] = v;
+    o.updatedAt = now; return o;
+  }
+  function taskSetOwner(t, type, key, now) {
+    var o = Object.assign({}, t); o.ownerType = type === 'project' || type === 'lead' ? type : ''; o.ownerKey = o.ownerType ? String(key || '') : ''; o.updatedAt = now; return o;
+  }
+  // фактическая дата закрытия ставится сама
+  function taskDone(t, now) { var o = Object.assign({}, t); o.status = 'done'; o.doneAt = now; o.updatedAt = now; taskPush(o, 'Выполнена', now); return o; }
+  function taskReopen(t, now) { var o = Object.assign({}, t); o.status = 'open'; o.doneAt = ''; o.updatedAt = now; taskPush(o, 'Возвращена в работу', now); return o; }
+  // будильник сработал: время напоминания наступило, задача не закрыта
+  function taskAlarm(t, nowLoc) { return !!t && t.status !== 'done' && !!t.remind && t.remind <= (nowLoc || nowLocal()); }
+  function taskLate(t, todayIso) { return !!t && t.status !== 'done' && !!t.due && t.due < (todayIso || today()); }
+  function mergeTasks(local, remote) {
+    var out = {}, k;
+    for (k in (local || {})) out[k] = local[k];
+    for (k in (remote || {})) if (!out[k] || (remote[k].updatedAt || '') > (out[k].updatedAt || '')) out[k] = remote[k];
+    return out;
+  }
+  function tasksToList(map) { return Object.keys(map || {}).sort().map(function (k) { return map[k]; }); }
+  function tasksFromList(list) { var m = {}; (list || []).forEach(function (t) { if (t && t.id) m[t.id] = t; }); return m; }
+  function taskOwnerName(t, leads) {
+    if (t.ownerType === 'project') return t.ownerKey || '';
+    if (t.ownerType === 'lead') { var l = (leads || {})[t.ownerKey]; return l ? (l.name || 'Без названия') : ''; }
+    return '';
+  }
+  function taskCmp(a, b) {
+    if (!a.due !== !b.due) return a.due ? -1 : 1;
+    if (a.due !== b.due) return a.due < b.due ? -1 : 1;
+    return (a.createdAt || '') < (b.createdAt || '') ? -1 : 1;
+  }
+  function taskView(t, o) {
+    return { id: t.id, title: t.title || 'Без названия', desc: t.desc || '', zone: taskZone(t.zone).id, zoneName: taskZone(t.zone).name, due: t.due || '', remind: t.remind || '', comment: t.comment || '', status: t.status === 'done' ? 'done' : 'open', doneAt: t.doneAt || '', ownerType: t.ownerType || '', ownerKey: t.ownerKey || '', owner: taskOwnerName(t, o.leads), late: taskLate(t, o.today), alarm: taskAlarm(t, o.nowLocal), createdAt: t.createdAt || '' };
+  }
+  // задачи одной карточки: открытые по сроку, затем выполненные
+  function tasksFor(tasks, type, key, o) {
+    o = o || {};
+    var all = Object.keys(tasks || {}).map(function (id) { return tasks[id]; }).filter(function (t) { return t.ownerType === type && t.ownerKey === key; }).map(function (t) { return taskView(t, o); });
+    var open = all.filter(function (t) { return t.status === 'open'; }).sort(taskCmp), done = all.filter(function (t) { return t.status === 'done'; }).sort(function (a, b) { return a.doneAt < b.doneAt ? 1 : -1; });
+    return { open: open, done: done, list: open.concat(done), alarms: open.filter(function (t) { return t.alarm; }).length };
+  }
+  // вкладка «Задачи»: фильтр по зоне ('all' или id зоны), статусу ('open'|'done') и тексту
+  function tasksBoard(tasks, o) {
+    o = o || {};
+    var q = (o.query || '').toLowerCase(), zoneCounts = { all: 0 }, doneCount = 0, openCount = 0, items = [];
+    TASKS.ZONES.forEach(function (z) { zoneCounts[z.id] = 0; });
+    Object.keys(tasks || {}).forEach(function (id) {
+      var v = taskView(tasks[id], o);
+      if (q && (v.title + ' ' + v.desc + ' ' + v.comment + ' ' + v.owner).toLowerCase().indexOf(q) < 0) return;
+      if (v.status === 'done') doneCount++; else { openCount++; zoneCounts.all++; zoneCounts[v.zone]++; }
+      if (v.status !== (o.status || 'open')) return;
+      if (o.zone && o.zone !== 'all' && v.zone !== o.zone) return;
+      items.push(v);
+    });
+    if ((o.status || 'open') === 'done') items.sort(function (a, b) { return a.doneAt < b.doneAt ? 1 : -1; }); else items.sort(taskCmp);
+    return { items: items, zoneCounts: zoneCounts, openCount: openCount, doneCount: doneCount };
+  }
   function renameArticlePatches(records, oldName, newName) {
     var o = lc(oldName), out = [];
     records.forEach(function (r) { if (r.article && lc(r.article) === o && r.article !== newName) out.push({ id: r.id, patch: { article: newName } }); });
@@ -1079,7 +1155,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
   }
 
   /* ---------- копии ---------- */
-  var BACKUP_VERSION = 2;
+  var BACKUP_VERSION = 3; // 3: добавлены задачи (meta.tasks); копии версий 1 и 2 читаются
   function backupObject(state) {
     return { app: 'kubcrafter-money', version: BACKUP_VERSION, createdAt: nowISO(), namespace: state.namespace || '',
       records: state.records, log: state.log || [], decisions: state.decisions || [], meta: state.meta || {} };
@@ -1154,7 +1230,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, TASKS: TASKS, taskZone: taskZone, nowLocal: nowLocal, newTask: newTask, taskSet: taskSet, taskSetOwner: taskSetOwner, taskDone: taskDone, taskReopen: taskReopen, taskAlarm: taskAlarm, taskLate: taskLate, mergeTasks: mergeTasks, tasksToList: tasksToList, tasksFromList: tasksFromList, taskOwnerName: taskOwnerName, tasksFor: tasksFor, tasksBoard: tasksBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };
@@ -1240,8 +1316,8 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
   var S = {
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
-    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, leads: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    admin: false, projMode: 'board', doneAll: false, leadMode: 'funnel', leadQuery: '', lcard: null, artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, leads: {}, tasks: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
+    admin: false, projMode: 'board', doneAll: false, leadMode: 'funnel', leadQuery: '', lcard: null, tcard: null, taskZone: 'all', taskStatus: 'open', taskQuery: '', artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -1251,7 +1327,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     S.log = jparse(lsGet(pref() + 'log'), []);
     S.decisions = jparse(lsGet(pref() + 'decisions'), []);
     var meta = jparse(lsGet(pref() + 'meta'), {});
-    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', stmUrl: meta.stmUrl || '', stmUrlAt: meta.stmUrlAt || '', stmFiles: meta.stmFiles || {}, stmCheckedAt: meta.stmCheckedAt || '', projects: meta.projects || {}, leads: meta.leads || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
+    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', stmUrl: meta.stmUrl || '', stmUrlAt: meta.stmUrlAt || '', stmFiles: meta.stmFiles || {}, stmCheckedAt: meta.stmCheckedAt || '', projects: meta.projects || {}, leads: meta.leads || {}, tasks: meta.tasks || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
     if (!S.records.length) S.meta.lastPull = ''; // на устройстве записей нет: берём всё из облака
     ensureCatalogNow(true); persist();
   }
@@ -1332,10 +1408,10 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
   }
   function syncMeta() {
     return syncDoc('state', function () {
-      return { articles: S.meta.articles, deletedArticles: S.meta.deletedArticles, projects: KC.projectsToList(S.meta.projects), leads: KC.leadsToList(S.meta.leads) };
+      return { articles: S.meta.articles, deletedArticles: S.meta.deletedArticles, projects: KC.projectsToList(S.meta.projects), leads: KC.leadsToList(S.meta.leads), tasks: KC.tasksToList(S.meta.tasks) };
     }, function (r) {
       var m = KC.mergeArticles(S.meta.articles, S.meta.deletedArticles, r.articles || [], r.deletedArticles || []);
-      S.meta.articles = m.articles; S.meta.deletedArticles = m.deleted; S.meta.projects = KC.mergeProjects(S.meta.projects, KC.projectsFromList(r.projects || [])); S.meta.leads = KC.mergeLeads(S.meta.leads, KC.leadsFromList(r.leads || []));
+      S.meta.articles = m.articles; S.meta.deletedArticles = m.deleted; S.meta.projects = KC.mergeProjects(S.meta.projects, KC.projectsFromList(r.projects || [])); S.meta.leads = KC.mergeLeads(S.meta.leads, KC.leadsFromList(r.leads || [])); S.meta.tasks = KC.mergeTasks(S.meta.tasks, KC.tasksFromList(r.tasks || []));
     }).then(function () {
       return syncDoc('decisions', function () {
         return { decisions: S.decisions, ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements };
@@ -1388,7 +1464,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>', plus: '<path d="M12 5v14M5 12h14"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>', trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
     moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-    ops: '<path d="M4 6h16M4 12h16M4 18h10"/>', proj: '<path d="M3 7h6l2 2h10v10H3z"/>', lead: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>', stm: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>', cfg: '<path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2M21 3v6h-6"/>',
+    ops: '<path d="M4 6h16M4 12h16M4 18h10"/>', proj: '<path d="M3 7h6l2 2h10v10H3z"/>', lead: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>', task: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l3 3 5-6"/>', bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>', stm: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>', cfg: '<path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2M21 3v6h-6"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>', swap: '<path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4"/>', wifi: '<path d="M2 8.8a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 20h.01M3 3l18 18"/>'
   };
   function svg(name, size) { size = size || 20; return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICON[name] + '</svg>'; }
@@ -1988,7 +2064,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
       }).join('') + '</div></div>';
     }).join('');
     var hist = (pm.hist || []).slice(0, 8).map(function (x) { return '<div class="small"><span class="mu">' + esc(ruDate(x.at)) + '</span> ' + esc(x.t) + '</div>'; }).join('');
-    return head + secs + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История стадий</div>' + hist + '</div>' : '');
+    return head + tasksBlock('project', key) + secs + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История стадий</div>' + hist + '</div>' : '');
   }
 
   /* ---------- CRM: лиды ---------- */
@@ -2078,7 +2154,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     } else {
       head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold" style="font-size:16px">Стала проектом «' + esc(l.projectKey || '') + '»</div><button type="button" class="btn main" data-act="ld-openproject">Открыть проект</button></div>';
     }
-    return head + ldFieldHtml(l, miss, l.status === 'lead' ? req : []) + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История</div>' + hist + '</div>' : '');
+    return head + tasksBlock('lead', l.id) + ldFieldHtml(l, miss, l.status === 'lead' ? req : []) + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История</div>' + hist + '</div>' : '');
   }
   function ldNewForm() {
     return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px"><label class="cflabel"><span>Название заявки</span><input class="input" id="lp-name" placeholder="Например: Кухня Иванова" autocomplete="off"></label><label class="cflabel"><span>Телефон</span><input class="input" id="lp-phone" autocomplete="off"></label><label class="cflabel"><span>Источник обращения</span><input class="input" id="lp-source" placeholder="Сайт, Авито, звонок…" autocomplete="off"></label><button type="button" class="btn main" data-act="ld-new-save">Создать заявку</button></div>';
@@ -2467,7 +2543,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
   function backupBase() { return 'kubcrafter-dengi-' + S.mode + '-' + KC.today(); }
   function markBackup() { S.meta.lastBackupAt = KC.nowISO(); addLog('backup', 'Сделана копия (' + S.records.length + ' записей)'); persist(); render(); }
   function doBackupJson() {
-    var obj = KC.backupObject({ records: S.records, log: S.log, decisions: S.decisions, meta: { ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements, projects: S.meta.projects, leads: S.meta.leads, articles: S.meta.articles }, namespace: S.mode });
+    var obj = KC.backupObject({ records: S.records, log: S.log, decisions: S.decisions, meta: { ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements, projects: S.meta.projects, leads: S.meta.leads, tasks: S.meta.tasks, articles: S.meta.articles }, namespace: S.mode });
     var name = backupBase() + '.json', text = JSON.stringify(obj);
     var file = null;
     try { file = new File([text], name, { type: 'application/json' }); } catch (e) {}
@@ -2502,7 +2578,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
       if (err) return toast(err);
       if (!confirm('Заменить текущие данные (' + S.records.length + ' записей) данными из копии (' + o.records.length + ' записей)?')) return;
       S.records = o.records; S.log = o.log || []; S.decisions = o.decisions || [];
-      S.meta.ignoredKeys = (o.meta && o.meta.ignoredKeys) || []; S.meta.statements = (o.meta && o.meta.statements) || []; S.meta.projects = (o.meta && o.meta.projects) || {}; S.meta.leads = (o.meta && o.meta.leads) || {}; S.meta.articles = (o.meta && o.meta.articles) || []; ensureCatalogNow(true);
+      S.meta.ignoredKeys = (o.meta && o.meta.ignoredKeys) || []; S.meta.statements = (o.meta && o.meta.statements) || []; S.meta.projects = (o.meta && o.meta.projects) || {}; S.meta.leads = (o.meta && o.meta.leads) || {}; S.meta.tasks = (o.meta && o.meta.tasks) || {}; S.meta.articles = (o.meta && o.meta.articles) || []; ensureCatalogNow(true);
       S.records.forEach(function (r) { S.meta.dirty[r.id] = 1; });
       addLog('restore', 'Восстановлено из копии от ' + ruDate(o.createdAt) + ' (' + o.records.length + ' записей)'); persist(); render(); toast('Данные восстановлены');
     };
@@ -2552,11 +2628,122 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     });
   }
 
+  /* ---------- CRM: задачи ---------- */
+  var tkTimer = null;
+  function tkFlush() { if (tkTimer) { clearTimeout(tkTimer); tkTimer = null; persist(); } }
+  function tkCur() { return S.tcard && S.tcard.id ? S.meta.tasks[S.tcard.id] || null : null; }
+  function tkNowOpts() { return { today: KC.today(), nowLocal: KC.nowLocal(), leads: S.meta.leads }; }
+  function tkDt(v) { return v ? ruDate(v) + (v.length > 10 ? ' ' + v.slice(11, 16) : '') : ''; }
+  function tkAlarmIcon(c) { return c.alarm ? '<span class="tkalarm" role="img" aria-label="Напоминание сработало" title="Напоминание: ' + esc(tkDt(c.remind)) + '">' + svg('bell', 16) + '</span>' : ''; }
+  function tkRow(c, showOwner) {
+    var meta = [];
+    if (c.status === 'done') meta.push('<span class="pill">выполнена ' + esc(ruDate(c.doneAt)) + '</span>');
+    else { meta.push('<span class="pill' + (c.zone === 'none' ? ' warn' : '') + '">' + esc(c.zoneName) + '</span>'); if (c.due) meta.push('<span class="' + (c.late ? 'neg bold' : 'mu') + '">срок ' + esc(ruDate(c.due)) + (c.late ? ' (просрочена)' : '') + '</span>'); }
+    if (showOwner && c.owner) meta.push('<span class="mu">' + esc(c.owner) + '</span>');
+    return '<button type="button" class="op glass tkrow' + (c.status === 'done' ? ' tkdone' : '') + '" data-act="tk-open" data-id="' + esc(c.id) + '"><div style="flex:1;min-width:0"><div class="t">' + esc(c.title) + '</div><div class="s tkmeta">' + meta.join(' ') + '</div></div>' + tkAlarmIcon(c) + '</button>';
+  }
+  function tasksBlock(type, key) {
+    var r = KC.tasksFor(S.meta.tasks, type, key, tkNowOpts());
+    return '<div class="glass" id="tkblock" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="row between wrap gap8"><div class="bold">Задачи · ' + r.open.length + ' открытых' + (r.alarms ? ' ' + tkAlarmIcon({ alarm: true, remind: '' }) : '') + '</div><button type="button" class="btn" data-act="tk-new" data-ot="' + esc(type) + '" data-ok="' + esc(key) + '">+ Задача</button></div>' +
+      (r.list.length ? '<div class="list">' + r.list.map(function (c) { return tkRow(c, false); }).join('') + '</div>' : '<div class="small mu">Задач нет</div>') + '</div>';
+  }
+  function viewTasks() {
+    var b = KC.tasksBoard(S.meta.tasks, Object.assign(tkNowOpts(), { zone: S.taskZone, status: S.taskStatus, query: S.taskQuery })), Z = KC.TASKS.ZONES;
+    var out = '<div class="row between"><div class="h2" style="margin:0">Задачи</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
+    out += '<div class="searchbox">' + svg('search', 18) + '<input id="tq" class="input" type="search" enterkeyhint="search" placeholder="Поиск по задаче, описанию, карточке" value="' + esc(S.taskQuery) + '" autocomplete="off"></div>';
+    out += '<div class="wsel" role="group" aria-label="Зона">' + [['all', 'Все']].concat(Z.map(function (z) { return [z.id, z.name]; })).map(function (x) { return '<button type="button" class="chip ' + (S.taskZone === x[0] ? 'on' : '') + '" data-act="tk-zone" data-v="' + x[0] + '">' + esc(x[1]) + ' · ' + b.zoneCounts[x[0]] + '</button>'; }).join('') + '</div>';
+    out += '<div class="wsel" role="group" aria-label="Статус">' + [['open', 'Открытые', b.openCount], ['done', 'Выполненные', b.doneCount]].map(function (x) { return '<button type="button" class="chip ' + (S.taskStatus === x[0] ? 'on' : '') + '" data-act="tk-status" data-v="' + x[0] + '">' + x[1] + ' · ' + x[2] + '</button>'; }).join('') + '</div>';
+    out += '<button type="button" class="btn main" data-act="tk-new" data-ot="" data-ok="">+ Новая задача</button>';
+    var body = b.items.length ? '<div class="list">' + b.items.map(function (c) { return tkRow(c, true); }).join('') + '</div>' : '<div class="glass mu" style="padding:18px;text-align:center">' + (S.taskStatus === 'done' ? 'Выполненных задач нет' : 'Открытых задач нет') + '</div>';
+    body += '<div class="tiny mu">Задача без зоны попадает в «Не распределены». Значок будильника появляется, когда наступило время напоминания, а задача не выполнена.</div>';
+    return out + '<div id="tasklist">' + body + '</div>';
+  }
+  function tkOwnerSelect(cur) {
+    var ps = Object.keys(S.meta.projects).sort(function (a, b) { return a.localeCompare(b, 'ru'); }), ls = KC.leadsToList(S.meta.leads).filter(function (l) { return l.status !== 'won'; }).sort(function (a, b) { return (a.name || '').localeCompare(b.name || '', 'ru'); });
+    var opt = function (v, name) { return '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(name) + '</option>'; };
+    return '<select class="input" id="tf-owner"><option value="">Без карточки</option>' + (ps.length ? '<optgroup label="Проекты">' + ps.map(function (k) { return opt('p:' + k, k); }).join('') + '</optgroup>' : '') + (ls.length ? '<optgroup label="Лиды">' + ls.map(function (l) { return opt('l:' + l.id, l.name || 'Без названия'); }).join('') + '</optgroup>' : '') + '</select>';
+  }
+  function tkOwnerVal(t) { return t.ownerType === 'project' ? 'p:' + t.ownerKey : t.ownerType === 'lead' ? 'l:' + t.ownerKey : ''; }
+  function tkForm(t, isNew) {
+    var Z = KC.TASKS.ZONES, ov = tkOwnerVal(t);
+    var ownerOpts = tkOwnerSelect(ov);
+    // карточка, которой нет в списках (например, лид уже стал проектом): оставляем выбранное значение
+    if (ov && ownerOpts.indexOf('value="' + esc(ov) + '"') < 0) ownerOpts = ownerOpts.replace('</select>', '<option value="' + esc(ov) + '" selected>' + esc(KC.taskOwnerName(t, S.meta.leads) || t.ownerKey) + '</option></select>');
+    var f = function (label, inner) { return '<label class="cflabel"><span>' + label + '</span>' + inner + '</label>'; };
+    return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px">' +
+      f('Название задачи', '<input class="input" id="tf-title" value="' + esc(t.title) + '" placeholder="Что нужно сделать" autocomplete="off">') +
+      f('Описание', '<textarea class="input" id="tf-desc" rows="3" placeholder="Подробности">' + esc(t.desc) + '</textarea>') +
+      f('Зона ответственности', '<select class="input" id="tf-zone">' + Z.map(function (z) { return '<option value="' + z.id + '"' + (z.id === KC.taskZone(t.zone).id ? ' selected' : '') + '>' + esc(z.name) + '</option>'; }).join('') + '</select>') +
+      f('Карточка', ownerOpts) +
+      f('Срок завершения', '<input class="input" id="tf-due" type="date" value="' + esc(t.due) + '">') +
+      f('Напоминание (будильник)', '<input class="input" id="tf-remind" type="datetime-local" value="' + esc(t.remind) + '">') +
+      f('Комментарий', '<textarea class="input" id="tf-comment" rows="2" placeholder="Комментарий">' + esc(t.comment) + '</textarea>') +
+      (isNew ? '<button type="button" class="btn main" data-act="tk-save">Создать задачу</button>' : '') + '</div>';
+  }
+  function tkView(t) {
+    var c = KC.tasksFor({ x: t }, t.ownerType, t.ownerKey, tkNowOpts()).list[0] || {}, done = t.status === 'done';
+    var head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="row between wrap gap8"><div class="bold" style="font-size:16px">' + (done ? 'Выполнена ' + esc(ruDate(t.doneAt)) : 'Открыта') + '</div>' + tkAlarmIcon(c) + '</div>' +
+      (c.late ? '<div class="small neg bold">Срок прошёл: ' + esc(ruDate(t.due)) + '</div>' : '') + '<div class="row gap8 wrap">' + (done ? '<button type="button" class="btn main" data-act="tk-reopen">Вернуть в работу</button>' : '<button type="button" class="btn main" data-act="tk-done">Выполнена</button>') + '</div></div>';
+    var hist = (t.hist || []).slice(0, 6).map(function (x) { return '<div class="small"><span class="mu">' + esc(ruDate(x.at)) + '</span> ' + esc(x.t) + '</div>'; }).join('');
+    return head + tkForm(t, false) + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История</div>' + hist + '</div>' : '');
+  }
+  function renderTCard() {
+    var c = S.tcard, host = $('#tcard');
+    if (!c) { if (host) host.remove(); return; }
+    if (!host) { host = document.createElement('div'); host.id = 'tcard'; document.body.appendChild(host); }
+    var t = c.isNew ? c.draft : tkCur(), title = c.isNew ? 'Новая задача' : t ? (t.title || 'Без названия') : '', body = c.isNew ? tkForm(t, true) : t ? tkView(t) : '';
+    var pill = t && !c.isNew ? '<span class="pill ' + (t.status === 'done' ? '' : 'warn') + '">' + (t.status === 'done' ? 'выполнена' : 'открыта') + '</span>' : '<span></span>';
+    var prev = host.querySelector('.sheet'), top = prev ? prev.scrollTop : 0;
+    host.innerHTML = '<div class="sheet" style="z-index:60"><div class="inner"><div class="row between"><button type="button" class="iconbtn" data-act="tk-close" aria-label="Закрыть">' + svg('close', 22) + '</button><div class="bold" style="font-size:17px;text-align:center">' + esc(title) + '</div>' + pill + '</div>' + body + '</div></div>';
+    if (prev) host.querySelector('.sheet').scrollTop = top;
+  }
+  function tkRefresh() { renderTCard(); if (S.pcard) renderPCard(); if (S.lcard) renderLCard(); if (S.view === 'tasks') render(); }
+  function tkInput(k, el) {
+    var c = S.tcard; if (!c) return;
+    if (c.isNew) { c.draft = KC.taskSet(c.draft, k, el.value, c.draft.updatedAt); return; }
+    var t = tkCur(); if (!t) return;
+    S.meta.tasks[t.id] = KC.taskSet(t, k, el.value, KC.nowISO());
+    if (tkTimer) clearTimeout(tkTimer); tkTimer = setTimeout(function () { tkTimer = null; persist(); }, 400);
+  }
+  function tkOwnerChange(el) {
+    var c = S.tcard, v = el.value, type = v.indexOf('p:') === 0 ? 'project' : v.indexOf('l:') === 0 ? 'lead' : '', key = v.slice(2);
+    if (!c) return;
+    if (c.isNew) { c.draft = KC.taskSetOwner(c.draft, type, key, c.draft.updatedAt); return; }
+    var t = tkCur(); if (!t) return;
+    S.meta.tasks[t.id] = KC.taskSetOwner(t, type, key, KC.nowISO()); persist(); tkRefresh();
+  }
+  function tkAction(a, t) {
+    var c = S.tcard, now = KC.nowISO();
+    if (a === 'tk-zone') { S.taskZone = t.getAttribute('data-v'); return render(); }
+    if (a === 'tk-status') { S.taskStatus = t.getAttribute('data-v'); return render(); }
+    if (a === 'tk-new') { S.tcard = { id: null, isNew: true, draft: KC.newTask('', { ownerType: t.getAttribute('data-ot'), ownerKey: t.getAttribute('data-ok') }, now) }; return renderTCard(); }
+    if (a === 'tk-open') { S.tcard = { id: t.getAttribute('data-id') }; return renderTCard(); }
+    if (a === 'tk-close') { tkFlush(); S.tcard = null; renderTCard(); if (S.pcard) renderPCard(); if (S.lcard) renderLCard(); if (S.view === 'tasks') render(); return; }
+    if (!c) return;
+    if (a === 'tk-save') {
+      var d = c.draft; if (!String(d.title || '').trim()) return toast('Введите название задачи');
+      var nt = KC.newTask(d.title, { desc: d.desc, zone: d.zone, due: d.due, remind: d.remind, comment: d.comment, ownerType: d.ownerType, ownerKey: d.ownerKey }, now);
+      S.meta.tasks[nt.id] = nt; addLog('task', 'Новая задача «' + nt.title + '»', ''); persist();
+      S.tcard = { id: nt.id }; tkRefresh(); return toast('Задача создана');
+    }
+    var cur = tkCur(); if (!cur) return;
+    if (a === 'tk-done') { S.meta.tasks[cur.id] = KC.taskDone(cur, now); addLog('task', 'Задача «' + cur.title + '» выполнена', ''); persist(); tkRefresh(); return toast('Задача выполнена'); }
+    if (a === 'tk-reopen') { S.meta.tasks[cur.id] = KC.taskReopen(cur, now); addLog('task', 'Задача «' + cur.title + '» возвращена в работу', ''); persist(); tkRefresh(); return toast('Возвращена в работу'); }
+  }
+  // раз в минуту: если у какой-то задачи наступило время напоминания, обновляем экран (но не во время ввода)
+  var tkSig = '';
+  function tkAlarmSig() { var ids = []; Object.keys(S.meta.tasks || {}).forEach(function (id) { if (KC.taskAlarm(S.meta.tasks[id], KC.nowLocal())) ids.push(id); }); return ids.sort().join(','); }
+  function tkAlarmTick() {
+    var sig = tkAlarmSig(); if (sig === tkSig) return; tkSig = sig;
+    var ae = document.activeElement; if (S.form || S.modal || S.tcard || (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) return;
+    render();
+  }
+
   /* ---------- общий рендер и события ---------- */
-  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['settings', 'Настройки', 'gear']];
+  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['tasks', 'Задачи', 'task'], ['settings', 'Настройки', 'gear']];
   function render() {
     document.documentElement.setAttribute('data-theme', S.theme);
-    var body = S.view === 'projects' ? viewProjects() : S.view === 'leads' ? viewLeads() : S.view === 'settings' ? viewSettings() : viewOps();
+    var body = S.view === 'projects' ? viewProjects() : S.view === 'leads' ? viewLeads() : S.view === 'tasks' ? viewTasks() : S.view === 'settings' ? viewSettings() : viewOps();
     var nav = '<nav class="nav" aria-label="Разделы">' + NAV.map(function (n) { return '<button type="button" class="' + (S.view === n[0] ? 'on' : '') + '" data-act="nav" data-v="' + n[0] + '">' + svg(n[2], 22) + n[1] + (n[0] === 'settings' && openDecisionsCount() ? '<span class="badge" role="img" aria-label="Нужно решение по выпискам: ' + openDecisionsCount() + '">' + openDecisionsCount() + '</span>' : '') + '</button>'; }).join('') + '</nav>';
     var fab = S.view === 'ops' ? '<button type="button" class="fab" data-act="newrec" aria-label="Новая операция">' + svg('plus', 26) + '</button>' : '';
     var kb0 = $('#kb'), kbl = kb0 ? kb0.scrollLeft : 0;
@@ -2565,6 +2752,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     if (S.view === 'ops' && S.sync.text) { var sp = $('#syncpill'); if (sp) sp.textContent = S.sync.text; }
     if (S.pcard) renderPCard();
     if (S.lcard) renderLCard();
+    if (S.tcard) renderTCard();
   }
   function refreshOpsParts() {
     var l = $('#list'); if (l) l.innerHTML = listHtml();
@@ -2577,6 +2765,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     if (a === 'confirmart') { e.preventDefault(); S.form.artSuggested = false; refreshArt(); return; }
     if (a.indexOf('pc-') === 0) { e.preventDefault(); return pcAction(a, t); }
     if (a.indexOf('ld-') === 0) { e.preventDefault(); return ldAction(a, t); }
+    if (a.indexOf('tk-') === 0) { e.preventDefault(); return tkAction(a, t); }
     if (a.indexOf('art-') === 0) { e.preventDefault(); if (a === 'art-open') return openArtSheet(t.getAttribute('data-id')); return artAction(a, t); }
     if (a === 'closeform') return closeForm();
     if (a === 'saveform') return saveForm();
@@ -2636,6 +2825,8 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     var id = e.target.id;
     if (id && id.indexOf('cf-') === 0 && S.pcard) { cfInput(id.slice(3), e.target); return; }
     if (id && id.indexOf('lf-') === 0 && S.lcard) { ldInput(id.slice(3), e.target); return; }
+    if (id && id.indexOf('tf-') === 0 && id !== 'tf-owner' && S.tcard) { tkInput({ 'title': 'title', 'desc': 'desc', 'zone': 'zone', 'due': 'due', 'remind': 'remind', 'comment': 'comment' }[id.slice(3)] || id.slice(3), e.target); return; }
+    if (id === 'tq') { S.taskQuery = e.target.value; if ($('#tasklist')) { var keepT = S.taskQuery; render(); var elT = $('#tq'); if (elT) { elT.focus(); elT.setSelectionRange(keepT.length, keepT.length); } } return; }
     if (id === 'lq') { S.leadQuery = e.target.value; if ($('#leadlist')) { var keepL = S.leadQuery; render(); var elL = $('#lq'); if (elL) { elL.focus(); elL.setSelectionRange(keepL.length, keepL.length); } } return; }
     if (id === 'a-name' && S.artSheet) { S.artSheet.name = e.target.value; return; }
     if (id === 'q') { S.query = e.target.value; return refreshOpsParts(); }
@@ -2644,6 +2835,8 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
   }
   function onChange(e) {
     var t = e.target;
+    if (t.id === 'tf-owner') return tkOwnerChange(t);
+    if (t.id && t.id.indexOf('tf-') === 0 && S.tcard) return tkInput(t.id.slice(3), t);
     if (t.getAttribute && t.getAttribute('data-stm')) { var f = t.files[0]; t.value = ''; if (f) openStatementFile(t.getAttribute('data-stm'), f); return; }
     if (t.id === 'an-from' || t.id === 'an-to') { S.anPeriod = { mode: 'custom', from: ($('#an-from') || {}).value || '', to: ($('#an-to') || {}).value || '' }; return render(); }
     if (t.id === 'restorefile') { var f2 = t.files[0]; t.value = ''; if (f2) doRestore(f2); return; }
@@ -2677,6 +2870,7 @@ input[type=date].input::-webkit-calendar-picker-indicator{margin-left:auto}
     window.addEventListener('offline', function () { S.online = false; render(); });
     if (CFG.firebase) { setSync('connecting', 'Облако: подключение…'); remoteInit(); } else setSync('local', '');
     if (CFG.sw && 'serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {} }
+    tkSig = tkAlarmSig(); setInterval(tkAlarmTick, 30000);
     render();
     window.KCApp = { S: S, commit: commit, render: render, setAdmin: setAdmin, syncStatements: syncStatements, parseStatementBytes: parseStatementBytes };
   }

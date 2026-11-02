@@ -537,6 +537,78 @@
     later.sort(byNext); lost.sort(function (a, b) { return a.updatedAt < b.updatedAt ? 1 : -1; });
     return { stages: stages, later: later, lost: lost, won: won, total: total };
   }
+  /* ---------- CRM: задачи. Данные: meta.tasks[id]; задача привязана к карточке проекта (key = название) или лида (key = id) ---------- */
+  var TASKS = {
+    ZONES: [{ id: 'none', name: 'Не распределены' }, { id: 'shop', name: 'Цех' }, { id: 'office', name: 'Офис' }, { id: 'director', name: 'Директор' }],
+    DEFAULT_ZONE: 'none'
+  };
+  function taskZone(id) { for (var i = 0; i < TASKS.ZONES.length; i++) if (TASKS.ZONES[i].id === id) return TASKS.ZONES[i]; return TASKS.ZONES[0]; }
+  function taskPush(o, text, now) { o.hist = [{ at: now, t: text }].concat(o.hist || []).slice(0, 40); }
+  function nowLocal() { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+  function newTask(title, o, now) {
+    o = o || {};
+    var t = { id: uid(), title: String(title || '').trim(), desc: o.desc || '', zone: taskZone(o.zone).id, due: o.due || '', remind: o.remind || '', comment: o.comment || '', status: 'open', doneAt: '', hist: [], createdAt: now, updatedAt: now };
+    if (o.ownerType === 'project' || o.ownerType === 'lead') { t.ownerType = o.ownerType; t.ownerKey = String(o.ownerKey || ''); } else { t.ownerType = ''; t.ownerKey = ''; }
+    taskPush(t, 'Задача создана', now); return t;
+  }
+  function taskSet(t, k, v, now) {
+    var o = Object.assign({}, t);
+    if (k === 'zone') o.zone = taskZone(v).id; else o[k] = v;
+    o.updatedAt = now; return o;
+  }
+  function taskSetOwner(t, type, key, now) {
+    var o = Object.assign({}, t); o.ownerType = type === 'project' || type === 'lead' ? type : ''; o.ownerKey = o.ownerType ? String(key || '') : ''; o.updatedAt = now; return o;
+  }
+  // фактическая дата закрытия ставится сама
+  function taskDone(t, now) { var o = Object.assign({}, t); o.status = 'done'; o.doneAt = now; o.updatedAt = now; taskPush(o, 'Выполнена', now); return o; }
+  function taskReopen(t, now) { var o = Object.assign({}, t); o.status = 'open'; o.doneAt = ''; o.updatedAt = now; taskPush(o, 'Возвращена в работу', now); return o; }
+  // будильник сработал: время напоминания наступило, задача не закрыта
+  function taskAlarm(t, nowLoc) { return !!t && t.status !== 'done' && !!t.remind && t.remind <= (nowLoc || nowLocal()); }
+  function taskLate(t, todayIso) { return !!t && t.status !== 'done' && !!t.due && t.due < (todayIso || today()); }
+  function mergeTasks(local, remote) {
+    var out = {}, k;
+    for (k in (local || {})) out[k] = local[k];
+    for (k in (remote || {})) if (!out[k] || (remote[k].updatedAt || '') > (out[k].updatedAt || '')) out[k] = remote[k];
+    return out;
+  }
+  function tasksToList(map) { return Object.keys(map || {}).sort().map(function (k) { return map[k]; }); }
+  function tasksFromList(list) { var m = {}; (list || []).forEach(function (t) { if (t && t.id) m[t.id] = t; }); return m; }
+  function taskOwnerName(t, leads) {
+    if (t.ownerType === 'project') return t.ownerKey || '';
+    if (t.ownerType === 'lead') { var l = (leads || {})[t.ownerKey]; return l ? (l.name || 'Без названия') : ''; }
+    return '';
+  }
+  function taskCmp(a, b) {
+    if (!a.due !== !b.due) return a.due ? -1 : 1;
+    if (a.due !== b.due) return a.due < b.due ? -1 : 1;
+    return (a.createdAt || '') < (b.createdAt || '') ? -1 : 1;
+  }
+  function taskView(t, o) {
+    return { id: t.id, title: t.title || 'Без названия', desc: t.desc || '', zone: taskZone(t.zone).id, zoneName: taskZone(t.zone).name, due: t.due || '', remind: t.remind || '', comment: t.comment || '', status: t.status === 'done' ? 'done' : 'open', doneAt: t.doneAt || '', ownerType: t.ownerType || '', ownerKey: t.ownerKey || '', owner: taskOwnerName(t, o.leads), late: taskLate(t, o.today), alarm: taskAlarm(t, o.nowLocal), createdAt: t.createdAt || '' };
+  }
+  // задачи одной карточки: открытые по сроку, затем выполненные
+  function tasksFor(tasks, type, key, o) {
+    o = o || {};
+    var all = Object.keys(tasks || {}).map(function (id) { return tasks[id]; }).filter(function (t) { return t.ownerType === type && t.ownerKey === key; }).map(function (t) { return taskView(t, o); });
+    var open = all.filter(function (t) { return t.status === 'open'; }).sort(taskCmp), done = all.filter(function (t) { return t.status === 'done'; }).sort(function (a, b) { return a.doneAt < b.doneAt ? 1 : -1; });
+    return { open: open, done: done, list: open.concat(done), alarms: open.filter(function (t) { return t.alarm; }).length };
+  }
+  // вкладка «Задачи»: фильтр по зоне ('all' или id зоны), статусу ('open'|'done') и тексту
+  function tasksBoard(tasks, o) {
+    o = o || {};
+    var q = (o.query || '').toLowerCase(), zoneCounts = { all: 0 }, doneCount = 0, openCount = 0, items = [];
+    TASKS.ZONES.forEach(function (z) { zoneCounts[z.id] = 0; });
+    Object.keys(tasks || {}).forEach(function (id) {
+      var v = taskView(tasks[id], o);
+      if (q && (v.title + ' ' + v.desc + ' ' + v.comment + ' ' + v.owner).toLowerCase().indexOf(q) < 0) return;
+      if (v.status === 'done') doneCount++; else { openCount++; zoneCounts.all++; zoneCounts[v.zone]++; }
+      if (v.status !== (o.status || 'open')) return;
+      if (o.zone && o.zone !== 'all' && v.zone !== o.zone) return;
+      items.push(v);
+    });
+    if ((o.status || 'open') === 'done') items.sort(function (a, b) { return a.doneAt < b.doneAt ? 1 : -1; }); else items.sort(taskCmp);
+    return { items: items, zoneCounts: zoneCounts, openCount: openCount, doneCount: doneCount };
+  }
   function renameArticlePatches(records, oldName, newName) {
     var o = lc(oldName), out = [];
     records.forEach(function (r) { if (r.article && lc(r.article) === o && r.article !== newName) out.push({ id: r.id, patch: { article: newName } }); });
@@ -897,7 +969,7 @@
   }
 
   /* ---------- копии ---------- */
-  var BACKUP_VERSION = 2;
+  var BACKUP_VERSION = 3; // 3: добавлены задачи (meta.tasks); копии версий 1 и 2 читаются
   function backupObject(state) {
     return { app: 'kubcrafter-money', version: BACKUP_VERSION, createdAt: nowISO(), namespace: state.namespace || '',
       records: state.records, log: state.log || [], decisions: state.decisions || [], meta: state.meta || {} };
@@ -972,7 +1044,7 @@
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, TASKS: TASKS, taskZone: taskZone, nowLocal: nowLocal, newTask: newTask, taskSet: taskSet, taskSetOwner: taskSetOwner, taskDone: taskDone, taskReopen: taskReopen, taskAlarm: taskAlarm, taskLate: taskLate, mergeTasks: mergeTasks, tasksToList: tasksToList, tasksFromList: tasksFromList, taskOwnerName: taskOwnerName, tasksFor: tasksFor, tasksBoard: tasksBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };

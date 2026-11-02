@@ -24,7 +24,7 @@ async function createLead(page, name, phone, source) {
   await page.goto(FILE); await page.waitForFunction(() => window.KCApp);
 
   // меню и пустое состояние
-  ok('nav has four tabs including Лиды', (await page.locator('.nav button').count()) === 4 && (await page.locator('.nav button[data-v="leads"]').innerText()).trim() === 'Лиды');
+  ok('nav has five tabs including Лиды', (await page.locator('.nav button').count()) === 5 && (await page.locator('.nav button[data-v="leads"]').innerText()).trim() === 'Лиды');
   await page.click('.nav button[data-v="leads"]');
   ok('funnel has four stage zones', (await page.locator('#kb .kst[data-lstage]').count()) === 4);
   ok('funnel stage names', (await page.locator('#kb .kcol .kch b').allInnerTexts()).join('|') === 'Новая заявка|Прогрев на встречу|Встреча назначена|После встречи');
@@ -153,7 +153,7 @@ async function createLead(page, name, phone, source) {
   await page.click('#lcard button[data-act="ld-close"]');
   ok('typed value saved on close', (await leadBy(page, 'Гардероб Зайцева')).f.phone === '+7 911 555-66-770');
   const bk = await page.evaluate(() => JSON.parse(JSON.stringify(KC.backupObject({ records: KCApp.S.records, log: KCApp.S.log, decisions: KCApp.S.decisions, meta: { ignoredKeys: [], statements: [], projects: KCApp.S.meta.projects, leads: KCApp.S.meta.leads, articles: [] }, namespace: 'test' }))));
-  ok('backup contains all leads with statuses', Object.keys(bk.meta.leads).length === 4 && Object.values(bk.meta.leads).map(l => l.status).sort().join() === 'lead,lead,lost,won' && bk.version === 2);
+  ok('backup contains all leads with statuses', Object.keys(bk.meta.leads).length === 4 && Object.values(bk.meta.leads).map(l => l.status).sort().join() === 'lead,lead,lost,won' && bk.version === 3);
   ok('backup contains the project made from a lead', bk.meta.projects['Кухня Соколова'].lead.name === 'Кухня Соколова');
   await page.waitForTimeout(700); await page.reload(); await page.waitForFunction(() => window.KCApp);
   await page.click('.nav button[data-v="leads"]');
@@ -171,7 +171,7 @@ async function createLead(page, name, phone, source) {
   await mp.route(/^https?:/, r => r.abort());
   mp.on('pageerror', e => errors.push(String(e)));
   await mp.goto(FILE); await mp.waitForFunction(() => window.KCApp);
-  ok('phone: four nav buttons fit', await mp.evaluate(() => { const n = [...document.querySelectorAll('.nav button')]; return n.length === 4 && n.every(b => b.getBoundingClientRect().width >= 56) && document.documentElement.scrollWidth <= window.innerWidth + 1; }));
+  ok('phone: five nav buttons fit', await mp.evaluate(() => { const n = [...document.querySelectorAll('.nav button')]; return n.length === 5 && n.every(b => b.getBoundingClientRect().width >= 56) && document.documentElement.scrollWidth <= window.innerWidth + 1; }));
   await mp.click('.nav button[data-v="leads"]');
   await createLead(mp, 'Кухня Попова', '+7 900 000-00-09', 'Сайт');
   await mp.click('#lcard button[data-act="ld-close"]');
