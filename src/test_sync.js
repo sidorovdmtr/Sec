@@ -46,7 +46,7 @@ async function device(browser) {
   await page.goto(FILE);
   return { ctx, page, errors };
 }
-const settle = (p) => p.waitForTimeout(1800);
+const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.KCApp && KCApp.setAdmin(true)));
 (async () => {
   const browser = await chromium.launch();
   const A = await device(browser), B = await device(browser);

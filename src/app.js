@@ -76,7 +76,7 @@
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
     records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    admin: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -344,13 +344,35 @@
   }
 
   /* ---------- экран: проекты ---------- */
+  // финансовый анализ: только закрытые проекты, период по дате закрытия, результат из снимка при закрытии
+  var AN_PERIODS = [['month', 'Этот месяц'], ['prevmonth', 'Прошлый месяц'], ['year', 'Этот год'], ['prevyear', 'Прошлый год'], ['all', 'Всё время'], ['custom', 'Свой период']];
+  function analysisHtml() {
+    var open = S.anOpen;
+    var head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px"><div class="row between"><div class="bold" style="font-size:15px">Финансовый анализ проектов</div><button type="button" class="btn" data-act="anToggle" aria-expanded="' + (open ? 'true' : 'false') + '" style="min-height:36px;padding:0 14px">' + (open ? 'Свернуть' : 'Развернуть') + '</button></div>';
+    if (!open) return head + '<div class="tiny mu">Только закрытые проекты. Свёрнуто, чтобы не мешать в работе.</div></div>';
+    var p = S.anPeriod, range = p.mode === 'custom' ? { from: p.from, to: p.to } : KC.periodRange(p.mode);
+    var res = KC.closedProjectsAnalysis(S.meta.projects, range.from, range.to), t = res.total;
+    var openCount = 0; KC.projectStats(S.records).list.forEach(function (m) { var pm = S.meta.projects[m.project || '']; if (m.project && !(pm && pm.status === 'done')) openCount++; });
+    var chips = '<div class="wsel" style="flex-wrap:wrap">' + AN_PERIODS.map(function (x) { return '<button type="button" class="chip ' + (p.mode === x[0] ? 'on' : '') + '" data-act="anper" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>';
+    var custom = p.mode === 'custom' ? '<div class="row" style="gap:8px"><input class="input" type="date" id="an-from" value="' + esc(p.from) + '" aria-label="С"><input class="input" type="date" id="an-to" value="' + esc(p.to) + '" aria-label="По"></div>' : '';
+    var span = (range.from || range.to) ? ruDateFull(range.from) + ' — ' + ruDateFull(range.to) : 'весь период';
+    var row = function (label, val, cls) { return '<div class="row between" style="align-items:baseline"><span class="mu">' + label + '</span><span class="bold num ' + cls + '" style="font-size:20px">' + val + '</span></div>'; };
+    var sums = '<div style="display:flex;flex-direction:column;gap:6px">' + row('Приход', money(t.income), 'pos') + row('Расход', money(t.expense), 'neg') +
+      '<div class="tiny mu" style="text-align:right">прямые ' + money(t.variable) + ', доля постоянных ' + money(t.fixed) + '</div>' + row('Прибыль', money(t.net), t.net < 0 ? 'neg' : 'pos') +
+      (t.margin == null ? '' : '<div class="tiny mu" style="text-align:right">рентабельность ' + Math.round(t.margin * 100) + '%</div>') + '</div>';
+    var meta = '<div class="small">Закрытых проектов за период: <b>' + t.count + '</b>. В работе (в расчёт не входят): <b>' + openCount + '</b>.</div><div class="tiny mu">Период: ' + span + ', по дате закрытия проекта. Результат каждого проекта взят на момент закрытия.</div>';
+    var rows = res.list.length ? '<div class="list">' + res.list.map(function (x) {
+      return '<button type="button" class="op glass" data-act="openproject" data-p="' + esc(x.project) + '"><div style="flex:1;min-width:0"><div class="t">' + esc(x.project) + '</div><div class="s num">закрыт ' + ruDateFull(x.doneDate) + ', приход ' + money(x.income) + ', расход ' + money(x.expense) + '</div></div><div class="t num ' + (x.net < 0 ? 'neg' : 'pos') + '">' + money(x.net) + '</div></button>';
+    }).join('') + '</div>' : '<div class="small mu">За этот период закрытых проектов нет.</div>';
+    return head + chips + custom + meta + sums + rows + '</div>';
+  }
+  function ruDateFull(iso) { if (!iso) return '…'; var p = iso.split('-'); return p[2] + '.' + p[1] + '.' + p[0]; }
   function viewProjects() {
     var st = KC.projectStats(S.records), q = S.projQuery.toLowerCase();
     var list = st.list.filter(function (m) { return !q || (m.project || 'без проекта').toLowerCase().indexOf(q) >= 0; });
     var out = '<div class="row between"><div class="h2" style="margin:0">Проекты</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
     out += '<div class="searchbox">' + svg('search', 18) + '<input id="pq" class="input" type="search" enterkeyhint="search" placeholder="Поиск по названию" value="' + esc(S.projQuery) + '" autocomplete="off"></div>';
-    out += '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px"><div class="glass" style="padding:8px 10px"><div class="tiny mu">Приход</div><div class="bold num pos">' + money(st.total.income) + '</div></div><div class="glass" style="padding:8px 10px"><div class="tiny mu">Расход</div><div class="bold num neg">' + money(st.total.expense) + '</div></div><div class="glass" style="padding:8px 10px"><div class="tiny mu">Прибыль</div><div class="bold num">' + money(st.total.profit) + '</div></div></div>';
-    out += '<div class="tiny mu">Прибыль считается по операциям, внесённым на проект. Доля постоянных расходов не учтена. Плановые операции и переводы не входят.</div>';
+    out += analysisHtml();
     out += '<div class="list" id="projlist">' + (list.length ? list.map(function (m) {
       var name = m.project || 'Без проекта', pct = m.margin == null ? null : Math.round(m.margin * 100), noIncome = m.income === 0 && m.expense > 0;
       var doneMeta = S.meta.projects[m.project || ''], isDone = doneMeta && doneMeta.status === 'done';
@@ -372,16 +394,16 @@
   }
   function syncCard() {
     var last = S.meta.stmCheckedAt ? 'Последняя проверка: ' + esc(ruDate(S.meta.stmCheckedAt)) + ', ' + esc(S.meta.stmCheckedAt.slice(11, 16)) + ' UTC. ' : 'Папка ещё не проверялась. ';
-    var cfg = S.meta.stmUrl ? '<div class="small mu">Ссылка скрипта сохранена. <button type="button" class="linkbtn" data-act="stmurlclear">Удалить</button></div>' :
+    var cfg = !S.admin ? (S.meta.stmUrl ? '' : '<div class="small mu">Ссылка скрипта выписок не задана. Её вставляют в режиме администратора (Настройки, внизу).</div>') : S.meta.stmUrl ? '<div class="small mu">Ссылка скрипта сохранена. <button type="button" class="linkbtn" data-act="stmurlclear">Удалить</button></div>' :
       '<div class="field"><label>Ссылка скрипта выписок (как пароль, никому не показывайте)</label><input class="input" id="stm-url" placeholder="https://script.google.com/macros/s/…/exec?key=…" autocomplete="off"></div><button type="button" class="btn" data-act="stmurlsave">Сохранить ссылку</button>';
     return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold" style="font-size:15px">Автозагрузка из папки на Диске</div><div class="small mu">' + last + 'Новые файлы из папки читаются и сверяются, уже прочитанные пропускаются.</div>' +
-      '<button type="button" class="btn main" data-act="stmsync"' + (S.stmBusy ? ' disabled' : '') + '>' + (S.stmBusy ? 'Проверяю…' : 'Синхронизировать выписки') + '</button><div class="small" id="stmstatus" style="white-space:pre-wrap">' + esc(S.stmMsg || '') + '</div>' + (S.meta.stmUrl ? '<button type="button" class="btn" data-act="stmdiag"' + (S.stmBusy ? ' disabled' : '') + '>Проверить связь со скриптом</button>' : '') + cfg + '</div>';
+      '<button type="button" class="btn main" data-act="stmsync"' + (S.stmBusy ? ' disabled' : '') + '>' + (S.stmBusy ? 'Проверяю…' : 'Синхронизировать выписки') + '</button><div class="small" id="stmstatus" style="white-space:pre-wrap">' + esc(S.stmMsg || '') + '</div>' + (S.meta.stmUrl && S.admin ? '<button type="button" class="btn" data-act="stmdiag"' + (S.stmBusy ? ' disabled' : '') + '>Проверить связь со скриптом</button>' : '') + cfg + '</div>';
   }
   function stmCard(id, desc) {
     var last = null; S.meta.statements.forEach(function (s) { if (s.wallet === id) last = s; });
     return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="row between"><div class="bold" style="font-size:15px">' + esc(wname(id)) + '</div><span class="pill warn">' + esc(desc) + '</span></div><div class="small mu">' + (last ? 'Последняя загрузка: ' + esc(ruDate(last.at)) + ', период ' + esc(ruDate(last.from)) + ' — ' + esc(ruDate(last.to)) + ', строк ' + last.rows + '.' : 'Выписок ещё не загружали.') + '</div>' +
       '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer;border-color:var(--chiponb);color:var(--acclink);font-weight:600">Загрузить выписку (xlsx)<input type="file" accept=".xlsx,.xls,.csv" data-stm="' + id + '" hidden></label>' +
-      (S.mode === 'test' ? '<button type="button" class="btn" data-act="teststm" data-w="' + id + '">Прогнать тестовую выписку</button>' : '') + '</div>';
+      (S.mode === 'test' && S.admin ? '<button type="button" class="btn" data-act="teststm" data-w="' + id + '">Прогнать тестовую выписку</button>' : '') + '</div>';
   }
   function viewStatements() {
     var out = '<div class="row between"><div class="h2" style="margin:0">Выписки и сверка</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
@@ -419,20 +441,26 @@
     var live = S.records.filter(function (r) { return !r.deleted; }).length;
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">База: ' + (S.mode === 'test' ? 'тестовая' : 'рабочая') + '</div><div class="small mu">Записей: ' + live + '. ' + (CFG.firebase ? esc(S.sync.text || 'Облако не подключено') : 'Данные хранятся только в этом браузере или телефоне. Облако Firebase не подключено.') + '</div><div class="tiny mu">Права: у всех, кто имеет доступ к инструменту, полные права, включая настройки статей. Список доступа задаётся в правилах Firebase (файл firestore.rules).</div>' +
       (CFG.firebase && Remote.authMod && !Remote.user ? '<button type="button" class="btn main" data-act="signin">Войти через Google</button>' : '') +
-      (CFG.allowProd ? '<button type="button" class="btn" data-act="switchmode">' + (S.mode === 'test' ? 'Перейти на рабочую базу' : 'Перейти на тестовую базу') + '</button>' : '') + '</div>';
+      (CFG.allowProd && S.admin ? '<button type="button" class="btn" data-act="switchmode">' + (S.mode === 'test' ? 'Перейти на рабочую базу' : 'Перейти на тестовую базу') + '</button>' : '') + '</div>';
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Резервная копия</div><div class="small mu">' + (S.meta.lastBackupAt ? 'Последняя копия: ' + esc(ruDate(S.meta.lastBackupAt)) + '.' : 'Копия ещё не делалась.') + ' JSON нужен для восстановления, xlsx только для просмотра. На iPhone JSON откроется в меню «Поделиться»: выберите «Сохранить в Файлы». Раз в неделю копию нужно сохранять на Google Диск: автоматически этот шаг пока не работает, нужен серверный планировщик.</div><button type="button" class="btn main" data-act="backup">Скачать копию для восстановления (JSON)</button><button type="button" class="btn" data-act="backupxlsx">Скачать таблицу для просмотра (xlsx)</button>' +
-      '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Восстановить из копии (JSON)<input type="file" accept=".json,application/json" id="restorefile" hidden></label></div>';
-    out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Импорт сводной таблицы</div><div class="small mu">Таблица с колонками Финолога (xlsx). Ниже можно указать, сколько первых строк загрузить: для проверки хватит 5.</div><input id="importlimit" class="input" type="text" inputmode="numeric" placeholder="Сколько строк загрузить (пусто = все)"><label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Выбрать файл xlsx<input type="file" accept=".xlsx,.xls" id="summaryfile" hidden></label></div>';
-    out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Исправление дат импорта</div><div class="small mu">Если сводная таблица была загружена до 02.11.2026, её даты могли сдвинуться на день назад (например, 30 октября записано как 29 октября). Кнопка покажет, сколько записей затронуто, и спросит подтверждение. Остатки не меняются. Сначала сделайте копию.</div><button type="button" class="btn" data-act="datefix">Исправить даты импорта</button></div>';
-    if (S.mode === 'test') out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Тестовая база</div><div class="small mu">Выдуманные данные для проверки. Сброс удаляет всю тестовую базу целиком, рабочая база не затрагивается.</div><button type="button" class="btn" data-act="seed">Добавить тестовые данные</button><button type="button" class="btn danger" data-act="resetTest">Сбросить тестовую базу</button></div>';
+      (S.admin ? '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Восстановить из копии (JSON)<input type="file" accept=".json,application/json" id="restorefile" hidden></label>' : '') + '</div>';
+    if (S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Импорт сводной таблицы</div><div class="small mu">Таблица с колонками Финолога (xlsx). Ниже можно указать, сколько первых строк загрузить: для проверки хватит 5.</div><input id="importlimit" class="input" type="text" inputmode="numeric" placeholder="Сколько строк загрузить (пусто = все)"><label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Выбрать файл xlsx<input type="file" accept=".xlsx,.xls" id="summaryfile" hidden></label></div>';
+    if (S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Исправление дат импорта</div><div class="small mu">Если сводная таблица была загружена до 02.11.2026, её даты могли сдвинуться на день назад (например, 30 октября записано как 29 октября). Кнопка покажет, сколько записей затронуто, и спросит подтверждение. Остатки не меняются. Сначала сделайте копию.</div><button type="button" class="btn" data-act="datefix">Исправить даты импорта</button></div>';
+    if (S.mode === 'test' && S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Тестовая база</div><div class="small mu">Выдуманные данные для проверки. Сброс удаляет всю тестовую базу целиком, рабочая база не затрагивается.</div><button type="button" class="btn" data-act="seed">Добавить тестовые данные</button><button type="button" class="btn danger" data-act="resetTest">Сбросить тестовую базу</button></div>';
     var log = S.log.slice(-30).reverse();
     out += '<div class="dayh">Журнал изменений</div><div class="glass" style="padding:4px 14px">' + (log.length ? '<table class="tb"><tbody>' + log.map(function (l) { return '<tr><td class="mu small" style="white-space:nowrap">' + esc(ruDate(l.at)) + '</td><td>' + esc(l.summary) + '</td></tr>'; }).join('') + '</tbody></table>' : '<div class="small mu" style="padding:12px 0">Пока пусто</div>') + '</div>';
     return out;
   }
+  // режим администратора: показывает служебные настройки; хранится только в памяти, при перезапуске приложения выключается
+  function adminCard() {
+    return '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px;margin-top:12px"><div class="row between"><div><div class="bold">Режим администратора</div><div class="tiny mu">Показывает служебные настройки: импорт сводной, исправление дат, восстановление из копии, сброс тестовой базы, переключатель базы, ссылку скрипта выписок. Выключается при перезапуске.</div></div>' +
+      '<button type="button" class="btn' + (S.admin ? ' main' : '') + '" data-act="adminToggle" role="switch" aria-checked="' + (S.admin ? 'true' : 'false') + '" style="min-width:96px">' + (S.admin ? 'Включён' : 'Выключен') + '</button></div></div>';
+  }
+  function setAdmin(v) { S.admin = !!v; render(); }
   function viewSettings() {
     var out = '<div class="row between"><div class="h2" style="margin:0">Настройки</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
     out += '<div class="seg glass"><button type="button" class="' + (S.settingsTab === 'articles' ? 'on' : '') + '" data-act="stab" data-v="articles">Статьи</button><button type="button" class="' + (S.settingsTab === 'data' ? 'on' : '') + '" data-act="stab" data-v="data">Данные и копии</button></div>';
-    return out + (S.settingsTab === 'data' ? settingsData() : settingsArticles());
+    return out + (S.settingsTab === 'data' ? settingsData() : settingsArticles()) + adminCard();
   }
   function openArtSheet(id) {
     var a = id ? S.meta.articles.filter(function (x) { return x.id === id; })[0] : null;
@@ -884,7 +912,7 @@
   }
   function syncStatements() {
     if (S.stmBusy) return;
-    if (!S.meta.stmUrl) return toast('Сначала вставьте ссылку скрипта выписок (внизу этого экрана)');
+    if (!S.meta.stmUrl) return toast('Ссылка скрипта не задана: включите режим администратора в Настройках и вставьте её на экране «Выписки»');
     if (!S.online) return toast('Нет связи: синхронизация выписок недоступна');
     if (!window.XLSX) return toast('Библиотека xlsx не загрузилась (нет связи). Повторите позже.');
     S.stmBusy = true; setStmStatus('Проверяю папку…');
@@ -1109,7 +1137,10 @@
       S.modal = null; renderModal(); return applyStatement(m.wallet, rows, m.name);
     }
     e.preventDefault && t.tagName === 'A' && e.preventDefault();
-    if (a === 'nav') { S.view = t.getAttribute('data-v'); return render(); }
+    if (a === 'nav') { var nv = t.getAttribute('data-v'); if (nv === 'projects' && S.view !== 'projects') S.anOpen = false; S.view = nv; return render(); }
+    if (a === 'adminToggle') return setAdmin(!S.admin);
+    if (a === 'anToggle') { S.anOpen = !S.anOpen; return render(); }
+    if (a === 'anper') { var mode = t.getAttribute('data-v'); if (mode === 'custom') { var pr = KC.periodRange('month'); S.anPeriod = { mode: 'custom', from: S.anPeriod.from || pr.from, to: S.anPeriod.to || KC.today() }; } else S.anPeriod = { mode: mode, from: '', to: '' }; return render(); }
     if (a === 'gocopies') { S.view = 'settings'; S.settingsTab = 'data'; return render(); }
     if (a === 'theme') { S.theme = S.theme === 'dark' ? 'light' : 'dark'; lsSet('kc.theme', S.theme); return render(); }
     if (a === 'month') { S.month = KC.shiftMonth(S.month, +t.getAttribute('data-n')); return render(); }
@@ -1151,6 +1182,7 @@
   function onChange(e) {
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-stm')) { var f = t.files[0]; t.value = ''; if (f) openStatementFile(t.getAttribute('data-stm'), f); return; }
+    if (t.id === 'an-from' || t.id === 'an-to') { S.anPeriod = { mode: 'custom', from: ($('#an-from') || {}).value || '', to: ($('#an-to') || {}).value || '' }; return render(); }
     if (t.id === 'restorefile') { var f2 = t.files[0]; t.value = ''; if (f2) doRestore(f2); return; }
     if (t.id === 'summaryfile') { var f3 = t.files[0]; t.value = ''; if (f3) doImportSummary(f3); return; }
     if (t.getAttribute && t.getAttribute('data-map') && S.modal) { var v = t.value; S.modal.map[t.getAttribute('data-map')] = v === '' ? undefined : +v; renderModal(); return; }
@@ -1182,7 +1214,7 @@
     if (CFG.firebase) { setSync('connecting', 'Облако: подключение…'); remoteInit(); } else setSync('local', '');
     if (CFG.sw && 'serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {} }
     render();
-    window.KCApp = { S: S, commit: commit, render: render, syncStatements: syncStatements, parseStatementBytes: parseStatementBytes };
+    window.KCApp = { S: S, commit: commit, render: render, setAdmin: setAdmin, syncStatements: syncStatements, parseStatementBytes: parseStatementBytes };
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

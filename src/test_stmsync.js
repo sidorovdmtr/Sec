@@ -45,7 +45,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
     }
     return route.abort();
   });
-  const ready = () => page.waitForFunction(() => window.KCApp);
+  const ready = () => page.waitForFunction(() => window.KCApp).then(() => page.evaluate(() => KCApp.setAdmin(true)));
   const toastTxt = async () => (await page.locator('#toast').innerText().catch(() => '')) || '';
   await page.goto(FILE); await ready();
   // учёт, как после импорта v9: 2 платежа и 1 комиссия 156 ₽ тремя записями по 52 ₽ (в сумме равны строке выписки)
@@ -58,7 +58,7 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   await page.click('.nav button[data-v="statements"]');
   // 1. без ссылки: подсказка; неверная ссылка отклоняется
   await page.click('button[data-act="stmsync"]');
-  ok('no url: hint', (await toastTxt()).indexOf('вставьте ссылку') >= 0, await toastTxt());
+  ok('no url: hint', (await toastTxt()).indexOf('режим администратора') >= 0, await toastTxt());
   await page.fill('#stm-url', 'https://example.com/x'); await page.click('button[data-act="stmurlsave"]');
   ok('bad url rejected', (await page.evaluate(() => KCApp.S.meta.stmUrl)) === '');
   ok('bad host explained', (await toastTxt()).indexOf('script.google.com') >= 0, await toastTxt());

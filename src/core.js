@@ -673,6 +673,37 @@
     return patches;
   }
 
+
+  /* ---------- финансовый анализ закрытых проектов ---------- */
+  // период по быстрым кнопкам: month, prevmonth, year, prevyear, all (даты ISO; пустые значит без ограничения)
+  function periodRange(mode, today) {
+    var t = today || today_(), ym = t.slice(0, 7), y = +t.slice(0, 4);
+    function monthRange(key) { return { from: key + '-01', to: addDays(shiftMonth(key, 1) + '-01', -1) }; }
+    if (mode === 'month') return monthRange(ym);
+    if (mode === 'prevmonth') return monthRange(shiftMonth(ym, -1));
+    if (mode === 'year') return { from: y + '-01-01', to: y + '-12-31' };
+    if (mode === 'prevyear') return { from: (y - 1) + '-01-01', to: (y - 1) + '-12-31' };
+    return { from: '', to: '' };
+  }
+  function today_() { return today(); }
+  // Только закрытые проекты (status done), период по дате закрытия. Результат берётся из снимка при закрытии (с долей постоянных расходов).
+  function closedProjectsAnalysis(projectsMeta, from, to) {
+    var list = [], tot = { count: 0, income: 0, variable: 0, fixed: 0, expense: 0, net: 0, margin: null };
+    Object.keys(projectsMeta || {}).forEach(function (key) {
+      var m = projectsMeta[key]; if (!key || !m || m.status !== 'done' || !m.result) return;
+      var stamp = m.doneAt || m.updatedAt || '', doneDate = stamp ? isoDate(new Date(stamp)) : '';
+      if (!doneDate) return;
+      if (from && doneDate < from) return;
+      if (to && doneDate > to) return;
+      var r = m.result, variable = r.variable || 0, fixed = r.fixedAllocated || 0;
+      list.push({ project: key, doneDate: doneDate, income: r.income || 0, variable: variable, fixed: fixed, expense: variable + fixed, net: r.net || 0 });
+    });
+    list.sort(function (a, b) { return a.doneDate < b.doneDate ? 1 : a.doneDate > b.doneDate ? -1 : (a.project < b.project ? -1 : 1); });
+    list.forEach(function (p) { tot.count++; tot.income += p.income; tot.variable += p.variable; tot.fixed += p.fixed; tot.expense += p.expense; tot.net += p.net; });
+    tot.margin = tot.income > 0 ? tot.net / tot.income : null;
+    return { list: list, total: tot };
+  }
+
   /* ---------- копии ---------- */
   var BACKUP_VERSION = 1;
   function backupObject(state) {
@@ -744,7 +775,7 @@
     WALLETS: WALLETS, wallet: wallet, parseMoney: parseMoney, formatMoney: formatMoney,
     isoDate: isoDate, today: today, diffDays: diffDays, addDays: addDays, monthKey: monthKey, monthLabel: monthLabel, shiftMonth: shiftMonth,
     dayLabel: dayLabel, shortDate: shortDate, parseDateInput: parseDateInput, validDate: validDate,
-    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, importDateFixPatches: importDateFixPatches, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
+    uid: uid, nowISO: nowISO, isTransfer: isTransfer, hasPair: hasPair, periodRange: periodRange, closedProjectsAnalysis: closedProjectsAnalysis, importDateFixPatches: importDateFixPatches, statementWalletByName: statementWalletByName, statementFileKey: statementFileKey, newStatementFiles: newStatementFiles, mergeProcessed: mergeProcessed, isOffReport: isOffReport, bankStateOf: bankStateOf, typeOf: typeOf, newRecord: newRecord, validate: validate, makeTransfer: makeTransfer, validateTransfer: validateTransfer,
     missingFields: missingFields, unfilledCount: unfilledCount, unpairedTransfers: unpairedTransfers, defaultBankState: defaultBankState,
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
