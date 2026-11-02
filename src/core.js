@@ -425,6 +425,84 @@
     });
     return { groups: groups, done: done, total: total };
   }
+
+  /* ---------- CRM: лиды (воронка до договора), долгострой, не прошли. Данные: meta.leads[id] ---------- */
+  var LEADS = {
+    STAGES: [{ n: 1, name: 'Новая заявка' }, { n: 2, name: 'Прогрев на встречу' }, { n: 3, name: 'Встреча назначена' }, { n: 4, name: 'После встречи' }],
+    LATER: ['Перезвонить позже', '1й перезвон', '2й перезвон', '3й перезвон'],
+    REASONS: ['Не распределены', 'Цена', 'Срок', 'Расположение', 'Заказчик', 'Другие', 'Ни разу не ответили'],
+    // что нужно заполнить, чтобы уйти с этой стадии вперёд (и чтобы создать проект) — черновик
+    REQUIRED: { 1: ['phone', 'source'], 2: ['next'], 3: ['address'], 4: ['result', 'priceFrom'] },
+    FIELDS: [
+      { title: 'Заявка', fields: [['name', 'Название заявки', 'text'], ['client', 'Клиент', 'text'], ['phone', 'Телефон', 'text'], ['source', 'Источник обращения', 'text'], ['address', 'Адрес объекта', 'text'], ['next', 'Дата следующего контакта', 'date'], ['comment', 'Комментарий', 'text']] },
+      { title: 'Заполнить во время разговора', fields: [['urgency', 'Срочность', 'text'], ['features', 'Особенности, которые нужно учесть', 'text'], ['important', 'Что важно при выборе', 'text'], ['size', 'Размер в расчёте цены', 'text'], ['materials', 'Материалы в расчёте цены', 'text'], ['priceFrom', 'Наша цена от, ₽', 'text'], ['priceTo', 'Наша цена до, ₽', 'text'], ['budget', 'Максимальный бюджет заказчика, ₽', 'text'], ['ready', 'Готовность к встрече', 'text'], ['result', 'Итог встречи', 'text']] }
+    ]
+  };
+  function leadFieldLabel(key) { for (var i = 0; i < LEADS.FIELDS.length; i++) for (var j = 0; j < LEADS.FIELDS[i].fields.length; j++) if (LEADS.FIELDS[i].fields[j][0] === key) return LEADS.FIELDS[i].fields[j][1]; return key; }
+  function leadStage(l) { var s = l && l.stage; return s >= 1 && s <= 4 ? s : 1; }
+  function leadField(l, k) { if (k === 'name') return l && l.name ? String(l.name) : ''; var v = l && l.f ? l.f[k] : ''; return v == null ? '' : String(v); }
+  function leadPush(o, text, now) { o.hist = [{ at: now, t: text }].concat(o.hist || []).slice(0, 60); }
+  function newLead(name, f, now) { return { id: uid(), name: name || '', status: 'lead', stage: 1, f: Object.assign({}, f), hist: [{ at: now, t: 'Заявка создана' }], createdAt: now, updatedAt: now }; }
+  function leadMissing(l, from, to) {
+    var out = [];
+    for (var s = from; s < to; s++) (LEADS.REQUIRED[s] || []).forEach(function (k) { if (!leadField(l, k).trim() && out.indexOf(k) < 0) out.push(k); });
+    return out;
+  }
+  function leadSetField(l, k, v, now) {
+    var o = Object.assign({}, l);
+    if (k === 'name') o.name = v; else { o.f = Object.assign({}, o.f); o.f[k] = v; }
+    o.updatedAt = now; return o;
+  }
+  function leadMove(l, to, now) {
+    var o = Object.assign({}, l), from = leadStage(l);
+    o.stage = to; o.updatedAt = now; leadPush(o, 'Стадия: ' + LEADS.STAGES[from - 1].name + ' → ' + LEADS.STAGES[to - 1].name, now); return o;
+  }
+  function leadToLater(l, laterIdx, next, now) {
+    var o = Object.assign({}, l); o.status = 'later'; o.later = laterIdx; o.f = Object.assign({}, o.f, { next: next || '' }); o.updatedAt = now;
+    leadPush(o, 'Долгострой: ' + LEADS.LATER[laterIdx] + (next ? ', связаться ' + next : ''), now); return o;
+  }
+  function leadToLost(l, reason, now) {
+    var o = Object.assign({}, l); o.status = 'lost'; o.reason = reason; o.updatedAt = now; leadPush(o, 'Не прошёл: ' + reason, now); return o;
+  }
+  function leadBack(l, now) {
+    var o = Object.assign({}, l); o.status = 'lead'; delete o.later; delete o.reason; o.updatedAt = now; leadPush(o, 'Возвращён в воронку', now); return o;
+  }
+  // лид становится проектом на первой стадии проектов; карточка и история переходят в проект, лид помечается «won»
+  function leadConvert(l, projectKey, projectsMeta, now) {
+    var key = String(projectKey || '').trim();
+    if (l.status === 'won') return { error: 'Этот лид уже стал проектом «' + (l.projectKey || '') + '»' };
+    if (!key) return { error: 'Укажите название проекта' };
+    if (projectsMeta && projectsMeta[key]) return { error: 'Проект «' + key + '» уже есть: выберите другое название' };
+    var miss = leadMissing(l, leadStage(l), 5);
+    if (miss.length) return { error: 'Чтобы создать проект, заполните: ' + miss.map(leadFieldLabel).join(', '), missing: miss };
+    var f = {}; ['client', 'phone', 'address', 'next'].forEach(function (k) { var v = leadField(l, k); if (v) f[k] = v; });
+    var project = { status: 'work', stage: CRM.FIRST, f: f, lead: { id: l.id, name: l.name, f: Object.assign({}, l.f) }, hist: [{ at: now, t: 'Создан из лида «' + (l.name || '') + '»' }].concat(l.hist || []).slice(0, 60), updatedAt: now };
+    var lead = Object.assign({}, l); lead.status = 'won'; lead.projectKey = key; lead.updatedAt = now; leadPush(lead, 'Создан проект «' + key + '»', now);
+    return { lead: lead, project: project };
+  }
+  function mergeLeads(local, remote) {
+    var out = {}, k;
+    for (k in (local || {})) out[k] = local[k];
+    for (k in (remote || {})) if (!out[k] || (remote[k].updatedAt || '') > (out[k].updatedAt || '')) out[k] = remote[k];
+    return out;
+  }
+  function leadsToList(map) { return Object.keys(map || {}).sort().map(function (k) { return map[k]; }); }
+  function leadsFromList(list) { var m = {}; (list || []).forEach(function (l) { if (l && l.id) m[l.id] = l; }); return m; }
+  function leadsBoard(leads, o) {
+    o = o || {};
+    var todayIso = o.today || today(), q = (o.query || '').toLowerCase(), byStage = {}, later = [], lost = [], won = 0, total = 0;
+    Object.keys(leads || {}).forEach(function (id) {
+      var l = leads[id];
+      if (q && (leadField(l, 'name') + ' ' + leadField(l, 'client') + ' ' + leadField(l, 'phone')).toLowerCase().indexOf(q) < 0) return;
+      if (l.status === 'won') { won++; return; }
+      var next = leadField(l, 'next'), card = { id: l.id, name: l.name || 'Без названия', client: leadField(l, 'client'), phone: leadField(l, 'phone'), source: leadField(l, 'source'), next: next, late: !!next && next < todayIso, priceFrom: Number(leadField(l, 'priceFrom')) || 0, priceTo: Number(leadField(l, 'priceTo')) || 0, stage: leadStage(l), later: l.later, reason: l.reason || '', updatedAt: l.updatedAt || '' };
+      if (l.status === 'later') later.push(card); else if (l.status === 'lost') lost.push(card); else { (byStage[card.stage] = byStage[card.stage] || []).push(card); total++; }
+    });
+    function byNext(a, b) { if (!a.next !== !b.next) return a.next ? -1 : 1; if (a.next !== b.next) return a.next < b.next ? -1 : 1; return a.name.localeCompare(b.name, 'ru'); }
+    var stages = LEADS.STAGES.map(function (s) { return { n: s.n, name: s.name, cards: (byStage[s.n] || []).sort(byNext) }; });
+    later.sort(byNext); lost.sort(function (a, b) { return a.updatedAt < b.updatedAt ? 1 : -1; });
+    return { stages: stages, later: later, lost: lost, won: won, total: total };
+  }
   function renameArticlePatches(records, oldName, newName) {
     var o = lc(oldName), out = [];
     records.forEach(function (r) { if (r.article && lc(r.article) === o && r.article !== newName) out.push({ id: r.id, patch: { article: newName } }); });
@@ -785,7 +863,7 @@
   }
 
   /* ---------- копии ---------- */
-  var BACKUP_VERSION = 1;
+  var BACKUP_VERSION = 2;
   function backupObject(state) {
     return { app: 'kubcrafter-money', version: BACKUP_VERSION, createdAt: nowISO(), namespace: state.namespace || '',
       records: state.records, log: state.log || [], decisions: state.decisions || [], meta: state.meta || {} };
@@ -860,7 +938,7 @@
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };

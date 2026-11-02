@@ -85,6 +85,26 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   await B.page.reload(); await settle(B.page);
   ok('B sees project done', await B.page.evaluate((n) => KCApp.S.meta.projects[n] && KCApp.S.meta.projects[n].status === 'done', pname));
 
+  // 4b. лиды: A создаёт заявку и отправляет в долгострой, B видит; B превращает в проект, A видит проект и лид «won»
+  await A.page.click('.nav button[data-v="leads"]'); await A.page.click('button[data-act="ld-new"]');
+  await A.page.fill('#lp-name', 'Облачная заявка'); await A.page.fill('#lp-phone', '+7 900 000-00-01'); await A.page.click('button[data-act="ld-new-save"]');
+  await A.page.click('#lcard button[data-act="ld-panel"][data-v="later"]'); await A.page.click('#lcard button[data-act="ld-later-do"]'); await A.page.click('#lcard button[data-act="ld-close"]'); await settle(A.page);
+  await B.page.reload(); await settle(B.page);
+  const bLead = await B.page.evaluate(() => { const l = Object.values(KCApp.S.meta.leads)[0]; return l ? { name: l.name, status: l.status, phone: l.f.phone } : null; });
+  ok('B sees lead from A', bLead && bLead.name === 'Облачная заявка' && bLead.status === 'later' && bLead.phone === '+7 900 000-00-01', bLead);
+  await B.page.evaluate(() => {
+    const now = new Date().toISOString(); let l = Object.values(KCApp.S.meta.leads)[0];
+    l = KC.leadBack(l, now);
+    ['source:Сайт', 'next:2026-11-10', 'address:Краснодар', 'result:Хочет до зимы', 'priceFrom:300000'].forEach(x => { const i = x.indexOf(':'); l = KC.leadSetField(l, x.slice(0, i), x.slice(i + 1), now); });
+    const r = KC.leadConvert(l, 'Облачный проект', KCApp.S.meta.projects, now);
+    KCApp.S.meta.leads[l.id] = r.lead; KCApp.S.meta.projects['Облачный проект'] = r.project;
+    KCApp.commit({}, 'create', 'лид стал проектом');
+  });
+  await settle(B.page);
+  await A.page.reload(); await settle(A.page);
+  const aSees = await A.page.evaluate(() => { const l = Object.values(KCApp.S.meta.leads)[0], p = KCApp.S.meta.projects['Облачный проект']; return { lead: l && l.status, key: l && l.projectKey, stage: p && p.stage, phone: p && p.f.phone, fromLead: p && p.lead && p.lead.name }; });
+  ok('A sees the lead won and the project created on B', aSees.lead === 'won' && aSees.key === 'Облачный проект' && aSees.stage === 5 && aSees.phone === '+7 900 000-00-01' && aSees.fromLead === 'Облачная заявка', aSees);
+
   // 5. решения по выписке: A загружает тестовую выписку, B решает, A видит
   await A.page.click('.nav button[data-v="statements"]');
   await A.page.click('button[data-act="teststm"][data-w="alfa"]'); await settle(A.page);

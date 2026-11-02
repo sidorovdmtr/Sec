@@ -543,5 +543,68 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('backup keeps CRM fields', back.meta.projects['Кухня'], { status: 'work', stage: 7, f: { sum: '10' }, updatedAt: NOW });
   eq('backup passes validation', KC.validateBackup(back).ok !== false, true);
 }
+
+// ---- CRM: лиды ----
+{
+  const L = KC.LEADS, NOW = '2026-11-02T10:00:00.000Z', N2 = '2026-11-02T12:00:00.000Z';
+  eq('leads: 4 funnel stages', L.STAGES.map(s => s.n), [1, 2, 3, 4]);
+  eq('leads: later stages as in Bitrix', L.LATER, ['Перезвонить позже', '1й перезвон', '2й перезвон', '3й перезвон']);
+  eq('leads: 7 loss reasons', L.REASONS.length, 7);
+  eq('leads: bitrix talk fields present', ['urgency', 'features', 'important', 'size', 'materials', 'priceFrom', 'priceTo', 'budget', 'ready'].every(k => L.FIELDS[1].fields.some(f => f[0] === k)), true);
+  let l = KC.newLead('Кухня Соколова', { client: 'Соколов' }, NOW);
+  eq('lead: new defaults', [l.status, l.stage, l.name, l.f.client, l.hist.length, typeof l.id], ['lead', 1, 'Кухня Соколова', 'Соколов', 1, 'string']);
+  eq('lead: ids are unique', KC.newLead('a', {}, NOW).id !== KC.newLead('a', {}, NOW).id, true);
+  eq('lead: stage clamps', [KC.leadStage({}), KC.leadStage({ stage: 9 }), KC.leadStage({ stage: 3 })], [1, 1, 3]);
+  eq('lead: missing to leave stage 1', KC.leadMissing(l, 1, 2), ['phone', 'source']);
+  eq('lead: missing accumulates', KC.leadMissing(l, 1, 4), ['phone', 'source', 'next', 'address']);
+  eq('lead: missing for project creation', KC.leadMissing(l, 1, 5), ['phone', 'source', 'next', 'address', 'result', 'priceFrom']);
+  eq('lead: no check going back', KC.leadMissing(l, 3, 1), []);
+  const l1 = KC.leadSetField(l, 'phone', '+7', N2), l2 = KC.leadSetField(l1, 'name', 'Новое имя', N2);
+  eq('lead: setField keeps others and stamps time', [l1.f.phone, l1.f.client, l1.updatedAt, l.f.phone], ['+7', 'Соколов', N2, undefined]);
+  eq('lead: name is a top-level field', [l2.name, KC.leadField(l2, 'name'), l2.f.name], ['Новое имя', 'Новое имя', undefined]);
+  const m1 = KC.leadMove(l, 2, N2);
+  eq('lead: move writes history', [m1.stage, m1.hist[0].t, m1.hist.length, l.stage], [2, 'Стадия: Новая заявка → Прогрев на встречу', 2, 1]);
+  const lt = KC.leadToLater(m1, 1, '2026-12-01', N2);
+  eq('lead: later', [lt.status, lt.later, lt.f.next, lt.hist[0].t], ['later', 1, '2026-12-01', 'Долгострой: 1й перезвон, связаться 2026-12-01']);
+  const ls = KC.leadToLost(m1, 'Цена', N2);
+  eq('lead: lost', [ls.status, ls.reason, ls.hist[0].t], ['lost', 'Цена', 'Не прошёл: Цена']);
+  const bk = KC.leadBack(ls, N2);
+  eq('lead: back to funnel keeps the stage', [bk.status, bk.reason, bk.later, bk.stage, bk.hist[0].t], ['lead', undefined, undefined, 2, 'Возвращён в воронку']);
+  // превращение в проект
+  const full = ['phone:+7 900', 'source:Сайт', 'next:2026-11-10', 'address:Краснодар', 'result:ок', 'priceFrom:300000', 'client:Соколов'].reduce((a, x) => { const i = x.indexOf(':'); return KC.leadSetField(a, x.slice(0, i), x.slice(i + 1), NOW); }, l);
+  eq('convert: empty name', KC.leadConvert(full, '  ', {}, N2).error, 'Укажите название проекта');
+  eq('convert: name taken', /уже есть/.test(KC.leadConvert(full, 'Кухня', { 'Кухня': { status: 'work' } }, N2).error), true);
+  const bad = KC.leadConvert(l, 'Кухня Соколова', {}, N2);
+  eq('convert: missing fields blocks', [/заполните/.test(bad.error), bad.missing.length], [true, 6]);
+  const ok1 = KC.leadConvert(full, ' Кухня Соколова ', {}, N2);
+  eq('convert: project on first project stage', [ok1.project.status, ok1.project.stage, ok1.project.f.client, ok1.project.f.phone, ok1.project.f.address, ok1.project.f.next], ['work', 5, 'Соколов', '+7 900', 'Краснодар', '2026-11-10']);
+  eq('convert: lead snapshot and history carried over', [ok1.project.lead.id === full.id, ok1.project.lead.f.priceFrom, ok1.project.hist[0].t, ok1.project.hist.length >= 2], [true, '300000', 'Создан из лида «Кухня Соколова»', true]);
+  eq('convert: lead marked won with project name', [ok1.lead.status, ok1.lead.projectKey, ok1.lead.hist[0].t], ['won', 'Кухня Соколова', 'Создан проект «Кухня Соколова»']);
+  eq('convert: twice is refused', /уже стал проектом/.test(KC.leadConvert(ok1.lead, 'Другое', {}, N2).error), true);
+  eq('convert: project passes into the kanban first stage', KC.crmStage(ok1.project), 5);
+  // слияние и облако
+  eq('merge leads: later edit wins per lead', KC.mergeLeads({ a: { id: 'a', updatedAt: NOW, name: 'старое' } }, { a: { id: 'a', updatedAt: N2, name: 'новое' }, b: { id: 'b', updatedAt: NOW } }).a.name, 'новое');
+  eq('merge leads: keeps local only', Object.keys(KC.mergeLeads({ x: { id: 'x', updatedAt: NOW } }, {})), ['x']);
+  eq('leads cloud list round trip', KC.leadsFromList(KC.leadsToList({ x: ok1.lead }))[ok1.lead.id], ok1.lead);
+  // доска
+  const mk = (name, extra) => Object.assign(KC.newLead(name, { phone: '1' }, NOW), extra);
+  const leads = {};
+  [mk('Б', { stage: 2 }), mk('А', { stage: 2 }), mk('В', { stage: 1 }), mk('Г', { status: 'later', later: 2 }), mk('Д', { status: 'lost', reason: 'Срок', updatedAt: N2 }), mk('Е', { status: 'won' })].forEach(x => { leads[x.id] = x; });
+  const wd = Object.values(leads).find(x => x.name === 'А'); wd.f = Object.assign({}, wd.f, { next: '2026-11-01', priceFrom: '100000' });
+  const bd = KC.leadsBoard(leads, { today: '2026-11-02' });
+  eq('board: counts', [bd.total, bd.later.length, bd.lost.length, bd.won], [3, 1, 1, 1]);
+  eq('board: stages hold names, dated first', bd.stages.map(s => s.cards.map(c => c.name)), [['В'], ['А', 'Б'], [], []]);
+  eq('board: late contact and price', [bd.stages[1].cards[0].late, bd.stages[1].cards[0].priceFrom], [true, 100000]);
+  eq('board: later and lost cards', [bd.later[0].later, bd.lost[0].reason], [2, 'Срок']);
+  eq('board: search by name', KC.leadsBoard(leads, { today: '2026-11-02', query: 'в' }).total, 1);
+  eq('board: empty', KC.leadsBoard({}, {}).total, 0);
+  // копия
+  const back = JSON.parse(JSON.stringify(KC.backupObject({ records: [], meta: { projects: {}, leads: leads }, namespace: 't' })));
+  eq('backup version is 2', back.version, 2);
+  eq('backup keeps leads', Object.keys(back.meta.leads).length, 6);
+  eq('backup validates', KC.validateBackup(back), '');
+  eq('old backup version 1 still validates', KC.validateBackup(Object.assign({}, back, { version: 1, meta: {} })), '');
+  eq('newer backup is refused', KC.validateBackup(Object.assign({}, back, { version: 3 })), 'Копия сделана более новой версией');
+}
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
