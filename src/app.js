@@ -76,7 +76,7 @@
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
     records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    admin: false, artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    admin: false, projMode: 'board', artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -372,7 +372,9 @@
     var list = st.list.filter(function (m) { return !q || (m.project || 'без проекта').toLowerCase().indexOf(q) >= 0; });
     var out = '<div class="row between"><div class="h2" style="margin:0">Проекты</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
     out += '<div class="searchbox">' + svg('search', 18) + '<input id="pq" class="input" type="search" enterkeyhint="search" placeholder="Поиск по названию" value="' + esc(S.projQuery) + '" autocomplete="off"></div>';
+    out += '<div class="wsel" role="group" aria-label="Вид проектов">' + [['board', 'Доска'], ['list', 'Список']].map(function (x) { return '<button type="button" class="chip ' + (S.projMode === x[0] ? 'on' : '') + '" data-act="projmode" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>';
     out += analysisHtml();
+    if (S.projMode === 'board') return out + '<div id="projlist">' + crmBoardHtml() + '</div>';
     out += '<div class="list" id="projlist">' + (list.length ? list.map(function (m) {
       var name = m.project || 'Без проекта', pct = m.margin == null ? null : Math.round(m.margin * 100), noIncome = m.income === 0 && m.expense > 0;
       var doneMeta = S.meta.projects[m.project || ''], isDone = doneMeta && doneMeta.status === 'done';
@@ -690,14 +692,98 @@
   function pct(x) { return x == null ? '—' : (x * 100).toFixed(1).replace('.', ',') + '%'; }
   function pkey() { return S.pcard.project === '__none__' ? '' : S.pcard.project; }
   function fixedNames() { return KC.fixedArticleNames(S.meta.articles); }
-  function openProjectCard(name) { S.pcard = { project: name, step: 'view', custom: false, from: '', to: '', inc: {} }; renderPCard(); }
+
+  /* ---------- CRM: канбан проектов ---------- */
+  var DESK = !!(window.matchMedia && matchMedia('(hover:hover) and (pointer:fine)').matches); // перетаскивание только мышью; на телефоне стадии меняются кнопками в карточке
+  var cfTimer = null, dragKey = null;
+  function cfFlush() { if (cfTimer) { clearTimeout(cfTimer); cfTimer = null; persist(); } }
+  function cfInput(k, el) {
+    var key = pkey(); if (!key) return;
+    S.meta.projects[key] = KC.crmSetField(S.meta.projects[key], k, el.value, KC.nowISO());
+    var ms = S.pcard.missing || [], i = ms.indexOf(k);
+    if (i >= 0 && el.value.trim()) { ms.splice(i, 1); el.classList.remove('bad'); }
+    if (cfTimer) clearTimeout(cfTimer);
+    cfTimer = setTimeout(function () { cfTimer = null; persist(); }, 500);
+  }
+  // перенос проекта на стадию; вперёд только если заполнены обязательные поля всех пройденных стадий (force: без проверки, для прежних проектов)
+  function crmMoveTo(key, to, force) {
+    var C = KC.CRM, pm = S.meta.projects[key], from = KC.crmStage(pm);
+    if (!key || to === from || to < C.FIRST || to > C.LAST || (pm && pm.status === 'done')) return { ok: false };
+    var miss = to > from ? KC.crmMissing(pm, from, to) : [];
+    if (miss.length && !force) return { ok: false, missing: miss };
+    S.meta.projects[key] = KC.crmMove(pm, to, KC.nowISO(), miss.length ? 'без проверки полей' : '');
+    addLog('project', 'Проект «' + key + '»: стадия «' + KC.crmStageInfo(from).name + '» → «' + KC.crmStageInfo(to).name + '»' + (miss.length ? ' (без проверки полей)' : ''), '');
+    persist();
+    return { ok: true };
+  }
+  function crmDrop(key, to) {
+    var r = crmMoveTo(key, to, false);
+    if (r.missing) {
+      openProjectCard(key); S.pcard.missing = r.missing; renderPCard();
+      return toast('Чтобы перенести в «' + KC.crmStageInfo(to).name + '», заполните: ' + r.missing.map(KC.crmFieldLabel).join(', '));
+    }
+    if (r.ok) { render(); toast('«' + key + '» → ' + KC.crmStageInfo(to).name); }
+  }
+  function onDragStart(e) {
+    var t = e.target.closest ? e.target.closest('.kcard[data-key]') : null; if (!t) return;
+    dragKey = t.getAttribute('data-key');
+    try { e.dataTransfer.setData('text/plain', dragKey); e.dataTransfer.effectAllowed = 'move'; } catch (x) {}
+    t.classList.add('drag');
+  }
+  function onDragEnd() { dragKey = null; document.querySelectorAll('.kcard.drag,.kst.over').forEach(function (n) { n.classList.remove('drag'); n.classList.remove('over'); }); }
+  function onDragOver(e) { if (!dragKey) return; var z = e.target.closest ? e.target.closest('.kst') : null; if (!z) return; e.preventDefault(); z.classList.add('over'); }
+  function onDragLeave(e) { var z = e.target.closest ? e.target.closest('.kst') : null; if (z && !z.contains(e.relatedTarget)) z.classList.remove('over'); }
+  function onDrop(e) {
+    if (!dragKey) return; var z = e.target.closest ? e.target.closest('.kst') : null; if (!z) return;
+    e.preventDefault(); var key = dragKey; onDragEnd(); crmDrop(key, +z.getAttribute('data-stage'));
+  }
+  function crmTile(c) {
+    var late = c.next && c.next < KC.today();
+    var note = c.mode === 'none' ? 'Сроки не указаны' : c.mode === 'overdue' ? '<span class="neg bold">Просрочен на ' + c.days + ' раб. дн.</span>' : 'Осталось ' + c.days + ' раб. дн. · ' + c.pct + '%';
+    var bar = c.mode === 'none' ? '' : '<span class="track"><span class="fill" style="width:' + c.pct + '%' + (c.mode === 'overdue' ? ';background:var(--neg)' : '') + '"></span></span>';
+    return '<button type="button" class="kcard glass" data-act="openproject" data-p="' + esc(c.key) + '" data-key="' + esc(c.key) + '"' + (DESK ? ' draggable="true"' : '') + '>' +
+      '<span class="kt">' + esc(c.key) + '</span>' + bar + '<span class="tiny mu">' + note + '</span>' +
+      '<span class="tiny num">приход ' + money(c.income) + ' · расход ' + money(c.expense) + '</span>' +
+      (c.sum ? '<span class="tiny mu num">договор ' + money(c.sum * 100) + '</span>' : '') +
+      (c.next ? '<span class="tiny ' + (late ? 'neg bold' : 'mu') + '">Контакт ' + esc(ruDate(c.next)) + (late ? ' (просрочен)' : '') + '</span>' : '') + '</button>';
+  }
+  function crmBoardHtml() {
+    var b = KC.crmBoard(S.records, S.meta.projects, { query: S.projQuery, today: KC.today() });
+    var cols = b.groups.map(function (g) {
+      return '<section class="kcol" aria-label="' + esc(g.name) + '"><div class="kch"><b>' + esc(g.name) + '</b><span class="pill">' + g.count + '</span></div>' + g.stages.map(function (s) {
+        return '<div class="kst" data-stage="' + s.n + '"><div class="ksh"><span>' + esc(s.name) + '</span><span>' + s.cards.length + '</span></div>' + (s.cards.length ? s.cards.map(crmTile).join('') : '<div class="kempty">пусто' + (DESK ? ', перетащите сюда' : '') + '</div>') + '</div>';
+      }).join('') + '</section>';
+    }).join('');
+    return '<div class="kb" id="kb">' + cols + '</div><div class="tiny mu">' + (b.total ? 'В работе: ' + b.total + '. ' : 'Проектов в работе нет. ') + 'Закрытых проектов: ' + b.done + ' (на доске не показываются, они в «Списке» и в финансовом анализе). ' + (DESK ? 'Карточку можно перетащить на другую стадию. ' : 'Стадия меняется кнопками в карточке. ') + 'Проекты без стадии стоят на первой.</div>';
+  }
+  function crmCardHtml(key, pm) {
+    if (!key) return '';
+    pm = pm || { status: 'work' };
+    var C = KC.CRM, st = KC.crmStage(pm), info = KC.crmStageInfo(st), done = pm.status === 'done', miss = (S.pcard && S.pcard.missing) || [], req = C.REQUIRED[st] || [];
+    var seg = '<div class="seg" aria-hidden="true">' + C.STAGES.map(function (s) { return '<i class="' + (s.n < st ? 'on' : s.n === st ? 'cur' : '') + '"></i>'; }).join('') + '</div>';
+    var tm = KC.crmTiming(pm, KC.today());
+    var tnote = tm.mode === 'none' ? 'Дата сдачи не указана' : tm.mode === 'overdue' ? '<span class="neg bold">Просрочен на ' + tm.days + ' раб. дн.</span>' : 'До сдачи ' + tm.days + ' раб. дн. · ' + tm.pct + '%';
+    var prev = st > C.FIRST && !done ? '<button type="button" class="btn" data-act="pc-crm-prev">← ' + esc(KC.crmStageInfo(st - 1).name) + '</button>' : '';
+    var next = st < C.LAST && !done ? '<button type="button" class="btn main" data-act="pc-crm-next">' + esc(KC.crmStageInfo(st + 1).name) + ' →</button>' : '';
+    var warn = miss.length ? '<div class="banner warn" role="alert">Чтобы перейти дальше, заполните: <b>' + miss.map(function (k) { return esc(KC.crmFieldLabel(k)); }).join(', ') + '</b>.<br><button type="button" class="linkbtn" data-act="pc-crm-force">Перенести без проверки полей (для старых проектов)</button></div>' : '';
+    var head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px"><div class="row between wrap gap8"><div class="bold" style="font-size:16px">Стадия: ' + esc(info.name) + '</div><span class="tiny mu">' + tnote + '</span></div>' + seg + (done ? '<div class="small mu">Проект завершён, стадия «Сдано».</div>' : '<div class="row gap8 wrap">' + prev + next + '</div>') + warn + '</div>';
+    var secs = C.FIELDS.map(function (sec) {
+      return '<div class="glass" style="padding:12px 14px"><div class="bold" style="margin-bottom:8px">' + esc(sec.title) + '</div><div class="cfgrid">' + sec.fields.map(function (fd) {
+        var k = fd[0], bad = miss.indexOf(k) >= 0, need = req.indexOf(k) >= 0;
+        return '<label class="cflabel"><span>' + esc(fd[1]) + (need ? ' <span class="' + (bad ? 'neg bold' : '') + '">· нужно для перехода</span>' : '') + '</span><input class="input' + (bad ? ' bad' : '') + '" id="cf-' + k + '" type="' + fd[2] + '" value="' + esc(KC.crmField(pm, k)) + '" autocomplete="off"></label>';
+      }).join('') + '</div></div>';
+    }).join('');
+    var hist = (pm.hist || []).slice(0, 8).map(function (x) { return '<div class="small"><span class="mu">' + esc(ruDate(x.at)) + '</span> ' + esc(x.t) + '</div>'; }).join('');
+    return head + secs + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История стадий</div>' + hist + '</div>' : '');
+  }
+  function openProjectCard(name) { S.pcard = { project: name, step: 'view', custom: false, from: '', to: '', inc: {}, missing: [] }; renderPCard(); }
   function incomeIds() { var ids = []; for (var k in S.pcard.inc) if (S.pcard.inc[k]) ids.push(k); return ids; }
   function calcOpts() { var p = S.pcard; return { from: p.from, to: p.to, mode: 'articles', fixedArticles: fixedNames(), incomeIds: incomeIds() }; }
   function initIncomes() { var p = S.pcard; p.inc = {}; KC.periodIncomes(S.records, p.from, p.to).forEach(function (r) { p.inc[r.id] = !!r.project; }); }
   function frow(label, val, cls, bold) { return '<div class="row between" style="padding:6px 0;border-top:1px solid var(--div);gap:12px"><span class="' + (bold ? 'bold' : '') + '">' + label + '</span><span class="num ' + (bold ? 'bold ' : '') + (cls || '') + '">' + val + '</span></div>'; }
   function cb(on) { return '<span class="cb ' + (on ? 'on' : '') + '" role="img" aria-label="' + (on ? 'отмечено' : 'не отмечено') + '">' + (on ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>' : '') + '</span>'; }
   function pcView(key, title) {
-    var fx = fixedNames(), f = KC.projectFinance(S.records, key, fx), pm = S.meta.projects[key], done = pm && pm.status === 'done', ops = KC.projectOps(S.records, key), h = '';
+    var fx = fixedNames(), f = KC.projectFinance(S.records, key, fx), pm = S.meta.projects[key], done = pm && pm.status === 'done', ops = KC.projectOps(S.records, key), h = crmCardHtml(key, pm);
     h += '<div class="glass" style="padding:12px 14px"><div class="bold" style="margin-bottom:2px">Финансовый результат без постоянных расходов</div>' +
       frow('Поступления (факт)', money(f.income), 'pos') + frow('Переменные расходы (себестоимость)', money(-f.variable), 'neg') +
       frow('Прибыль до постоянных расходов', money(f.gross), f.gross < 0 ? 'neg' : '', true) + frow('Рентабельность до постоянных расходов', pct(f.margin)) +
@@ -781,7 +867,12 @@
   }
   function pcAction(a, t) {
     var p = S.pcard, key = pkey();
-    if (a === 'pc-close') { S.pcard = null; return renderPCard(); }
+    if (a === 'pc-crm-next' || a === 'pc-crm-prev' || a === 'pc-crm-force') {
+      var cur = KC.crmStage(S.meta.projects[key]), to = a === 'pc-crm-prev' ? cur - 1 : cur + 1, rr = crmMoveTo(key, to, a === 'pc-crm-force');
+      if (rr.missing) { p.missing = rr.missing; return renderPCard(); }
+      p.missing = []; renderPCard(); render(); return toast('Стадия: ' + KC.crmStageInfo(to).name);
+    }
+    if (a === 'pc-close') { cfFlush(); S.pcard = null; renderPCard(); if (S.view === 'projects') render(); return; }
     if (a === 'pc-ops') { S.project = key || '__none__'; S.view = 'ops'; S.query = ''; S.pcard = null; renderPCard(); return render(); }
     if (a === 'pc-settings') { S.pcard = null; renderPCard(); S.view = 'settings'; S.settingsTab = 'articles'; return render(); }
     if (a === 'pc-done') { p.step = 'period'; p.custom = false; p.from = ''; p.to = ''; return renderPCard(); }
@@ -800,11 +891,11 @@
     if (a === 'pc-calc2') { p.step = 'calc'; return renderPCard(); }
     if (a === 'pc-save') {
       var res = KC.projectResult(S.records, key, calcOpts()); if (res.alloc.share == null) return;
-      S.meta.projects[key] = { status: 'done', doneAt: KC.nowISO(), updatedAt: KC.nowISO(), result: { from: res.alloc.from, to: res.alloc.to, fixedArticles: fixedNames(), incomeCount: incomeIds().length, income: res.income, variable: res.variable, ownIncome: res.alloc.ownIncome, allIncome: res.alloc.allIncome, share: res.alloc.share, fixedTotal: res.alloc.fixedTotal, fixedAllocated: res.alloc.fixedAllocated, net: res.net, netMargin: res.netMargin } };
+      S.meta.projects[key] = Object.assign({}, S.meta.projects[key], { status: 'done', stage: KC.CRM.LAST, doneAt: KC.nowISO(), updatedAt: KC.nowISO(), result: { from: res.alloc.from, to: res.alloc.to, fixedArticles: fixedNames(), incomeCount: incomeIds().length, income: res.income, variable: res.variable, ownIncome: res.alloc.ownIncome, allIncome: res.alloc.allIncome, share: res.alloc.share, fixedTotal: res.alloc.fixedTotal, fixedAllocated: res.alloc.fixedAllocated, net: res.net, netMargin: res.netMargin } });
       addLog('project', 'Проект «' + key + '» завершён: чистая прибыль ' + money(res.net) + ', постоянные расходы на заказ ' + money(res.alloc.fixedAllocated), '');
       persist(); p.step = 'view'; renderPCard(); render(); return toast('Итог проекта сохранён');
     }
-    if (a === 'pc-reopen') { S.meta.projects[key] = { status: 'work', updatedAt: KC.nowISO() }; addLog('project', 'Проект «' + key + '» возвращён в работу'); persist(); renderPCard(); render(); return toast('Проект возвращён в работу'); }
+    if (a === 'pc-reopen') { var po = Object.assign({}, S.meta.projects[key], { status: 'work', updatedAt: KC.nowISO() }); delete po.doneAt; delete po.result; S.meta.projects[key] = po; addLog('project', 'Проект «' + key + '» возвращён в работу'); persist(); renderPCard(); render(); return toast('Проект возвращён в работу'); }
   }
 
   /* ---------- выписки: загрузка, сверка ---------- */
@@ -1112,7 +1203,9 @@
     var body = S.view === 'projects' ? viewProjects() : S.view === 'statements' ? viewStatements() : S.view === 'settings' ? viewSettings() : viewOps();
     var nav = '<nav class="nav" aria-label="Разделы">' + NAV.map(function (n) { return '<button type="button" class="' + (S.view === n[0] ? 'on' : '') + '" data-act="nav" data-v="' + n[0] + '">' + svg(n[2], 22) + n[1] + '</button>'; }).join('') + '</nav>';
     var fab = S.view === 'ops' ? '<button type="button" class="fab" data-act="newrec" aria-label="Новая операция">' + svg('plus', 26) + '</button>' : '';
+    var kb0 = $('#kb'), kbl = kb0 ? kb0.scrollLeft : 0;
     $('#root').innerHTML = '<div class="app"><main class="page" id="main">' + body + '</main>' + nav + fab + '</div>';
+    var kb1 = $('#kb'); if (kb1 && kbl) kb1.scrollLeft = kbl;
     if (S.view === 'ops' && S.sync.text) { var sp = $('#syncpill'); if (sp) sp.textContent = S.sync.text; }
     if (S.pcard) renderPCard();
   }
@@ -1156,6 +1249,7 @@
     if (a === 'walletstoggle') { S.walletsOpen = !S.walletsOpen; return render(); }
     if (a === 'newrec') return openForm(null);
     if (a === 'edit') { var rec = byId(t.getAttribute('data-id')); if (rec) openForm(rec); return; }
+    if (a === 'projmode') { S.projMode = t.getAttribute('data-v'); return render(); }
     if (a === 'openproject') return openProjectCard(t.getAttribute('data-p'));
     if (a === 'clearproject') { S.project = ''; return render(); }
     if (a === 'stab') { S.settingsTab = t.getAttribute('data-v'); return render(); }
@@ -1181,6 +1275,7 @@
   }
   function onInput(e) {
     var id = e.target.id;
+    if (id && id.indexOf('cf-') === 0 && S.pcard) { cfInput(id.slice(3), e.target); return; }
     if (id === 'a-name' && S.artSheet) { S.artSheet.name = e.target.value; return; }
     if (id === 'q') { S.query = e.target.value; return refreshOpsParts(); }
     if (id === 'pq') { S.projQuery = e.target.value; var l = $('#projlist'); if (l) { var keep = S.projQuery; render(); var el = $('#pq'); if (el) { el.focus(); el.setSelectionRange(keep.length, keep.length); } } return; }
@@ -1207,6 +1302,7 @@
   function start() {
     load();
     document.addEventListener('click', onClick);
+    document.addEventListener('dragstart', onDragStart); document.addEventListener('dragend', onDragEnd); document.addEventListener('dragover', onDragOver); document.addEventListener('dragleave', onDragLeave); document.addEventListener('drop', onDrop);
     document.addEventListener('input', onInput);
     document.addEventListener('change', onChange);
     document.addEventListener('keydown', onFormKey);

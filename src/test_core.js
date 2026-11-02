@@ -477,5 +477,71 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('date fix is idempotent', KC.importDateFixPatches(done).length, 0);
   eq('date fix keeps balances', KC.balances(done).total, KC.balances([a, e]).total);
 }
+
+// ---- CRM: стадии проектов (канбан) ----
+{
+  const C = KC.CRM, NOW = '2026-11-02T10:00:00.000Z';
+  eq('crm: 14 stages 5..18', [C.STAGES.length, C.STAGES[0].n, C.STAGES[13].n], [14, 5, 18]);
+  eq('crm: every stage belongs to a group', C.STAGES.every(s => s.g >= 0 && s.g < C.GROUPS.length), true);
+  eq('crm: no meta -> first stage', KC.crmStage(undefined), 5);
+  eq('crm: work without stage -> first', KC.crmStage({ status: 'work' }), 5);
+  eq('crm: done -> last', KC.crmStage({ status: 'done', stage: 7 }), 18);
+  eq('crm: out of range -> first', KC.crmStage({ status: 'work', stage: 2 }), 5);
+  eq('crm: missing fields from 5 to 6', KC.crmMissing({}, 5, 6), ['contractNo', 'sum', 'prepay']);
+  eq('crm: filled fields pass', KC.crmMissing({ f: { contractNo: '1', sum: '100', prepay: '2026-10-01' } }, 5, 6), []);
+  eq('crm: whitespace is not filled', KC.crmMissing({ f: { contractNo: '  ', sum: '1', prepay: 'x' } }, 5, 6), ['contractNo']);
+  eq('crm: missing accumulates over several stages', KC.crmMissing({ f: { contractNo: '1', sum: '1', prepay: 'x' } }, 5, 8), ['measure', 'tz']);
+  eq('crm: no check going back', KC.crmMissing({}, 8, 6), []);
+  eq('crm: stage without required fields', KC.crmMissing({}, 10, 13), []);
+  const m1 = KC.crmMove(undefined, 6, NOW);
+  eq('crm: move creates meta', [m1.status, m1.stage, m1.updatedAt, m1.hist.length], ['work', 6, NOW, 1]);
+  eq('crm: move writes history', m1.hist[0].t, 'Стадия: Договор и предоплата → Замер');
+  const m2 = KC.crmMove(m1, 8, NOW, 'без проверки полей');
+  eq('crm: history newest first with note', [m2.hist.length, m2.hist[0].t], [2, 'Стадия: Замер → Проектирование (без проверки полей)']);
+  eq('crm: move does not mutate input', m1.stage, 6);
+  const f1 = KC.crmSetField({ status: 'done', doneAt: 'x', result: { net: 1 } }, 'phone', '+7', NOW);
+  eq('crm: setField keeps result and status', [f1.status, f1.result.net, f1.f.phone, f1.updatedAt], ['done', 1, '+7', NOW]);
+  eq('crm: setField on empty', KC.crmSetField(undefined, 'sum', '5', NOW).f.sum, '5');
+  eq('crm: workdays Mon->Fri next week', KC.workDaysBetween('2026-11-02', '2026-11-09'), 5);
+  eq('crm: workdays skip weekend', KC.workDaysBetween('2026-11-06', '2026-11-09'), 1);
+  eq('crm: workdays negative', KC.workDaysBetween('2026-11-09', '2026-11-02'), -5);
+  eq('crm: workdays bad date', KC.workDaysBetween('', '2026-11-02'), null);
+  eq('crm: timing none', KC.crmTiming({ f: { start: '2026-10-01' } }, '2026-11-02').mode, 'none');
+  eq('crm: timing overdue', KC.crmTiming({ f: { start: '2026-10-01', due: '2026-10-30' } }, '2026-11-02'), { mode: 'overdue', pct: 100, days: 1 });
+  const tm = KC.crmTiming({ f: { start: '2026-10-26', due: '2026-11-13' } }, '2026-11-02');
+  eq('crm: timing ok', [tm.mode, tm.days, tm.pct], ['ok', 9, 36]);
+  eq('crm: timing due today', KC.crmTiming({ f: { due: '2026-11-02' } }, '2026-11-02').days, 0);
+  // доска
+  const rec = (project, amount, kind) => R({ kind: kind || 'income', wallet: 'alfa', amount, date: '2026-10-05', project, article: 'Оказание услуг' });
+  const recs = [rec('Кухня А', 1000000), rec('Кухня А', -300000, 'expense'), rec('Шкаф Б', 500000), rec('Закрытый', 100000), rec('', 777)];
+  const meta = { 'Шкаф Б': { status: 'work', stage: 11, f: { due: '2026-11-10', start: '2026-10-01', sum: '500000', next: '2026-11-03' } }, 'Закрытый': { status: 'done', result: {} }, 'Только в CRM': { status: 'work', stage: 5 } };
+  const b = KC.crmBoard(recs, meta, { today: '2026-11-02' });
+  const at = (n) => b.groups.flatMap(g => g.stages).find(s => s.n === n).cards.map(c => c.key);
+  eq('board: project from operations without meta -> first stage', at(5), ['Кухня А', 'Только в CRM']);
+  eq('board: project with stage', at(11), ['Шкаф Б']);
+  eq('board: done project is not on the board', [b.done, b.total], [1, 3]);
+  eq('board: no-project operations are not a card', b.groups.flatMap(g => g.stages).flatMap(s => s.cards).some(c => c.key === ''), false);
+  eq('board: group counts', b.groups.map(g => g.count), [2, 1, 0, 0]);
+  const ka = b.groups[0].stages[0].cards.find(c => c.key === 'Кухня А');
+  eq('board: money from operations', [ka.income, ka.expense, ka.profit], [1000000, 300000, 700000]);
+  const kb = b.groups[1].stages[1].cards[0];
+  eq('board: contract sum and contact', [kb.sum, kb.next, kb.mode], [500000, '2026-11-03', 'ok']);
+  eq('board: search', KC.crmBoard(recs, meta, { today: '2026-11-02', query: 'шкаф' }).total, 1);
+  eq('board: empty', KC.crmBoard([], {}, { today: '2026-11-02' }).total, 0);
+  // отсортированы: сначала со сроком, по возрастанию
+  const b2 = KC.crmBoard([], { 'Б': { status: 'work', f: { due: '2026-12-01' } }, 'А': { status: 'work' }, 'В': { status: 'work', f: { due: '2026-11-20' } } }, { today: '2026-11-02' });
+  eq('board: order by due date, no date last', b2.groups[0].stages[0].cards.map(c => c.key), ['В', 'Б', 'А']);
+  // слияние: правка с полями побеждает по времени
+  const mg = KC.mergeProjects({ 'X': KC.crmMove({ status: 'work' }, 7, '2026-11-02T09:00:00.000Z') }, { 'X': KC.crmMove({ status: 'work' }, 9, '2026-11-02T11:00:00.000Z') });
+  eq('merge: later CRM edit wins whole object', [mg.X.stage, mg.X.hist.length], [9, 1]);
+  // выгрузка в список для облака и обратно сохраняет поля
+  const rt = KC.projectsFromList(KC.projectsToList({ 'Кухня': { status: 'work', stage: 7, f: { sum: '10', due: '2026-12-01' }, hist: [{ at: NOW, t: 'x' }], updatedAt: NOW } }));
+  eq('cloud list round trip keeps CRM fields', rt['Кухня'], { status: 'work', stage: 7, f: { sum: '10', due: '2026-12-01' }, hist: [{ at: NOW, t: 'x' }], updatedAt: NOW });
+  // копия JSON: поля карточек сохраняются и читаются обратно
+  const bk = KC.backupObject({ records: [], log: [], decisions: [], meta: { ignoredKeys: [], statements: [], projects: { 'Кухня': { status: 'work', stage: 7, f: { sum: '10' }, updatedAt: NOW } }, articles: [] }, namespace: 'test' });
+  const back = JSON.parse(JSON.stringify(bk));
+  eq('backup keeps CRM fields', back.meta.projects['Кухня'], { status: 'work', stage: 7, f: { sum: '10' }, updatedAt: NOW });
+  eq('backup passes validation', KC.validateBackup(back).ok !== false, true);
+}
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
