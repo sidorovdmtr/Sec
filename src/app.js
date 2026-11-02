@@ -76,7 +76,7 @@
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
     records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    admin: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    admin: false, artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -427,12 +427,16 @@
       (S.mode === 'test' && !cat.filter(function (x) { return !x.system; }).length ? '<button type="button" class="btn wide" data-act="seedcat">Добавить тестовый список статей</button>' : '') + '</div>';
     var pending = cat.filter(function (x) { return !x.system && !x.archived && x.activity === 'none'; }).length;
     if (pending) out += '<div class="banner warn">Не указан вид деятельности: ' + pending + ' ' + (pending === 1 ? 'статья' : 'статей') + '. Откройте статью и укажите вид деятельности.</div>';
-    KC.ACTIVITIES.forEach(function (act) {
-      var list = cat.filter(function (x) { return !x.archived && x.activity === act.id; }).sort(function (p, q) { return p.system !== q.system ? (p.system ? 1 : -1) : p.kind !== q.kind ? (p.kind === 'expense' ? -1 : 1) : (p.name < q.name ? -1 : 1); });
-      if (list.length) out += '<div class="dayh">' + esc(act.name) + ': ' + list.length + '</div><div class="list">' + list.map(function (x) { return artRow(x, use); }).join('') + '</div>';
-    });
-    var arch = cat.filter(function (x) { return x.archived; });
-    if (arch.length) out += '<div class="dayh">Архив: ' + arch.length + '</div><div class="list">' + arch.map(function (x) { return artRow(x, use); }).join('') + '</div>';
+    var counts = KC.ACTIVITIES.map(function (act) { return act.name + ' ' + cat.filter(function (x) { return !x.archived && x.activity === act.id; }).length; }).join(', '), archN = cat.filter(function (x) { return x.archived; }).length;
+    if (cat.length) out += '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="row between"><div class="bold" style="font-size:15px">Список статей: ' + cat.length + '</div><button type="button" class="btn" data-act="artListToggle" aria-expanded="' + (S.artListOpen ? 'true' : 'false') + '" style="min-height:36px;padding:0 14px">' + (S.artListOpen ? 'Свернуть' : 'Показать') + '</button></div><div class="tiny mu">' + esc(counts) + (archN ? ', архив ' + archN : '') + '. Список скрыт, чтобы не мешать.</div></div>';
+    if (S.artListOpen) {
+      KC.ACTIVITIES.forEach(function (act) {
+        var list = cat.filter(function (x) { return !x.archived && x.activity === act.id; }).sort(function (p, q) { return p.system !== q.system ? (p.system ? 1 : -1) : p.kind !== q.kind ? (p.kind === 'expense' ? -1 : 1) : (p.name < q.name ? -1 : 1); });
+        if (list.length) out += '<div class="dayh">' + esc(act.name) + ': ' + list.length + '</div><div class="list">' + list.map(function (x) { return artRow(x, use); }).join('') + '</div>';
+      });
+      var arch = cat.filter(function (x) { return x.archived; });
+      if (arch.length) out += '<div class="dayh">Архив: ' + arch.length + '</div><div class="list">' + arch.map(function (x) { return artRow(x, use); }).join('') + '</div>';
+    }
     if (!cat.length) out += '<div class="glass mu small" style="padding:14px">Справочник пуст. Добавьте статьи вручную или загрузите сводную таблицу: статьи из неё добавятся сами, а вид деятельности вы укажете здесь.</div>';
     return out;
   }
@@ -448,7 +452,8 @@
     if (S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Исправление дат импорта</div><div class="small mu">Если сводная таблица была загружена до 02.11.2026, её даты могли сдвинуться на день назад (например, 30 октября записано как 29 октября). Кнопка покажет, сколько записей затронуто, и спросит подтверждение. Остатки не меняются. Сначала сделайте копию.</div><button type="button" class="btn" data-act="datefix">Исправить даты импорта</button></div>';
     if (S.mode === 'test' && S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Тестовая база</div><div class="small mu">Выдуманные данные для проверки. Сброс удаляет всю тестовую базу целиком, рабочая база не затрагивается.</div><button type="button" class="btn" data-act="seed">Добавить тестовые данные</button><button type="button" class="btn danger" data-act="resetTest">Сбросить тестовую базу</button></div>';
     var log = S.log.slice(-30).reverse();
-    out += '<div class="dayh">Журнал изменений</div><div class="glass" style="padding:4px 14px">' + (log.length ? '<table class="tb"><tbody>' + log.map(function (l) { return '<tr><td class="mu small" style="white-space:nowrap">' + esc(ruDate(l.at)) + '</td><td>' + esc(l.summary) + '</td></tr>'; }).join('') + '</tbody></table>' : '<div class="small mu" style="padding:12px 0">Пока пусто</div>') + '</div>';
+    out += '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="row between"><div class="bold" style="font-size:15px">Журнал изменений: ' + S.log.length + '</div><button type="button" class="btn" data-act="logToggle" aria-expanded="' + (S.logOpen ? 'true' : 'false') + '" style="min-height:36px;padding:0 14px">' + (S.logOpen ? 'Свернуть' : 'Показать') + '</button></div>' + (S.logOpen ? '' : '<div class="tiny mu">Свёрнут. Показывает последние 30 записей.</div>') + '</div>';
+    if (S.logOpen) out += '<div class="glass" style="padding:4px 14px">' + (log.length ? '<table class="tb"><tbody>' + log.map(function (l) { return '<tr><td class="mu small" style="white-space:nowrap">' + esc(ruDate(l.at)) + '</td><td>' + esc(l.summary) + '</td></tr>'; }).join('') + '</tbody></table>' : '<div class="small mu" style="padding:12px 0">Пока пусто</div>') + '</div>';
     return out;
   }
   // режим администратора: показывает служебные настройки; хранится только в памяти, при перезапуске приложения выключается
@@ -1137,8 +1142,10 @@
       S.modal = null; renderModal(); return applyStatement(m.wallet, rows, m.name);
     }
     e.preventDefault && t.tagName === 'A' && e.preventDefault();
-    if (a === 'nav') { var nv = t.getAttribute('data-v'); if (nv === 'projects' && S.view !== 'projects') S.anOpen = false; S.view = nv; return render(); }
+    if (a === 'nav') { var nv = t.getAttribute('data-v'); if (nv === 'projects' && S.view !== 'projects') S.anOpen = false; if (nv === 'settings' && S.view !== 'settings') { S.artListOpen = false; S.logOpen = false; } S.view = nv; return render(); }
     if (a === 'adminToggle') return setAdmin(!S.admin);
+    if (a === 'artListToggle') { S.artListOpen = !S.artListOpen; return render(); }
+    if (a === 'logToggle') { S.logOpen = !S.logOpen; return render(); }
     if (a === 'anToggle') { S.anOpen = !S.anOpen; return render(); }
     if (a === 'anper') { var mode = t.getAttribute('data-v'); if (mode === 'custom') { var pr = KC.periodRange('month'); S.anPeriod = { mode: 'custom', from: S.anPeriod.from || pr.from, to: S.anPeriod.to || KC.today() }; } else S.anPeriod = { mode: mode, from: '', to: '' }; return render(); }
     if (a === 'gocopies') { S.view = 'settings'; S.settingsTab = 'data'; return render(); }

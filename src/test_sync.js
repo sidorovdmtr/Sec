@@ -68,7 +68,7 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   ok('B total equals A total', (await B.page.evaluate(() => KC.balances(KCApp.S.records).total)) === (await A.page.evaluate(() => KC.balances(KCApp.S.records).total)));
 
   // 3. B переименовывает статью -> A получает и название статьи, и обновлённые операции
-  await B.page.click('.nav button[data-v="settings"]');
+  await B.page.click('.nav button[data-v="settings"]'); await B.page.evaluate(() => { KCApp.S.artListOpen = true; KCApp.S.logOpen = true; KCApp.render(); });
   await B.page.locator('button[data-act="art-open"]:has-text("Закупка материала")').first().click();
   await B.page.fill('#a-name', 'Закупка материалов');
   await B.page.click('button[data-act="art-save"]'); await settle(B.page);
@@ -125,13 +125,13 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   await A.page.evaluate(() => { KCApp.S.meta.stmFiles['f|1|x'] = { name: 'old.xlsx', wallet: 'alfa', at: '2026-11-01T00:00:00Z', rows: 1 }; KCApp.commit({}); });
   await settle(A.page);
   ok('before reset cloud has records', Object.keys(store.money_test_records || {}).length > 0);
-  await A.page.click('.nav button[data-v="settings"]'); await A.page.click('button[data-act="stab"][data-v="data"]');
+  await A.page.click('.nav button[data-v="settings"]'); await A.page.evaluate(() => { KCApp.S.artListOpen = true; KCApp.S.logOpen = true; KCApp.render(); }); await A.page.click('button[data-act="stab"][data-v="data"]');
   await A.page.click('button[data-act="resetTest"]'); await settle(A.page);
   ok('reset: cloud test records deleted', Object.keys(store.money_test_records || {}).length === 0, Object.keys(store.money_test_records || {}).length);
   ok('reset: cloud decisions cleared', !((store.money_test_meta || {}).decisions) || ((store.money_test_meta.decisions.decisions || []).length === 0));
   ok('reset: A empty and url kept', (await A.page.evaluate(() => KCApp.S.records.length)) === 0 && !!(await A.page.evaluate(() => KCApp.S.meta.stmUrl)));
   // второе устройство хранит свою локальную копию: сброс нужно сделать и на нём
-  await B.page.click('.nav button[data-v="settings"]'); await B.page.click('button[data-act="stab"][data-v="data"]'); await B.page.click('button[data-act="resetTest"]'); await settle(B.page);
+  await B.page.click('.nav button[data-v="settings"]'); await B.page.evaluate(() => { KCApp.S.artListOpen = true; KCApp.S.logOpen = true; KCApp.render(); }); await B.page.click('button[data-act="stab"][data-v="data"]'); await B.page.click('button[data-act="resetTest"]'); await settle(B.page);
   await A.page.reload(); await settle(A.page); await B.page.reload(); await settle(B.page);
   ok('records do not come back to A and B', (await A.page.evaluate(() => KCApp.S.records.length)) === 0 && (await B.page.evaluate(() => KCApp.S.records.length)) === 0, [await A.page.evaluate(() => KCApp.S.records.length), await B.page.evaluate(() => KCApp.S.records.length)]);
   ok('processed files list cleared', (await A.page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === 0 && (await B.page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === 0);
