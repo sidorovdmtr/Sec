@@ -25,6 +25,7 @@ NODE_PATH=<путь к node_modules с playwright> node test_ui.js dist/deploy/i
 NODE_PATH=<путь к node_modules с playwright> node test_sync.js
 NODE_PATH=<путь к node_modules с playwright> node test_storage.js dist/deploy/index.html
 NODE_PATH=<путь к node_modules с playwright> node test_stmsync.js dist/deploy/index.html <путь к node_modules/xlsx/dist/xlsx.full.min.js>
+NODE_PATH=<путь к node_modules с playwright> node test_admin.js dist/deploy/index.html
 ```
 
 Тесты интерфейса грузят страницу из файла и блокируют внешние адреса, поэтому библиотека xlsx (SheetJS с cdnjs) и шрифты в тестах недоступны.
