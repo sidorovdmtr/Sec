@@ -589,6 +589,84 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     });
     return { groups: groups, done: done, total: total };
   }
+
+  /* ---------- CRM: лиды (воронка до договора), долгострой, не прошли. Данные: meta.leads[id] ---------- */
+  var LEADS = {
+    STAGES: [{ n: 1, name: 'Новая заявка' }, { n: 2, name: 'Прогрев на встречу' }, { n: 3, name: 'Встреча назначена' }, { n: 4, name: 'После встречи' }],
+    LATER: ['Перезвонить позже', '1й перезвон', '2й перезвон', '3й перезвон'],
+    REASONS: ['Не распределены', 'Цена', 'Срок', 'Расположение', 'Заказчик', 'Другие', 'Ни разу не ответили'],
+    // что нужно заполнить, чтобы уйти с этой стадии вперёд (и чтобы создать проект) — черновик
+    REQUIRED: { 1: ['phone', 'source'], 2: ['next'], 3: ['address'], 4: ['result', 'priceFrom'] },
+    FIELDS: [
+      { title: 'Заявка', fields: [['name', 'Название заявки', 'text'], ['client', 'Клиент', 'text'], ['phone', 'Телефон', 'text'], ['source', 'Источник обращения', 'text'], ['address', 'Адрес объекта', 'text'], ['next', 'Дата следующего контакта', 'date'], ['comment', 'Комментарий', 'text']] },
+      { title: 'Заполнить во время разговора', fields: [['urgency', 'Срочность', 'text'], ['features', 'Особенности, которые нужно учесть', 'text'], ['important', 'Что важно при выборе', 'text'], ['size', 'Размер в расчёте цены', 'text'], ['materials', 'Материалы в расчёте цены', 'text'], ['priceFrom', 'Наша цена от, ₽', 'text'], ['priceTo', 'Наша цена до, ₽', 'text'], ['budget', 'Максимальный бюджет заказчика, ₽', 'text'], ['ready', 'Готовность к встрече', 'text'], ['result', 'Итог встречи', 'text']] }
+    ]
+  };
+  function leadFieldLabel(key) { for (var i = 0; i < LEADS.FIELDS.length; i++) for (var j = 0; j < LEADS.FIELDS[i].fields.length; j++) if (LEADS.FIELDS[i].fields[j][0] === key) return LEADS.FIELDS[i].fields[j][1]; return key; }
+  function leadStage(l) { var s = l && l.stage; return s >= 1 && s <= 4 ? s : 1; }
+  function leadField(l, k) { if (k === 'name') return l && l.name ? String(l.name) : ''; var v = l && l.f ? l.f[k] : ''; return v == null ? '' : String(v); }
+  function leadPush(o, text, now) { o.hist = [{ at: now, t: text }].concat(o.hist || []).slice(0, 60); }
+  function newLead(name, f, now) { return { id: uid(), name: name || '', status: 'lead', stage: 1, f: Object.assign({}, f), hist: [{ at: now, t: 'Заявка создана' }], createdAt: now, updatedAt: now }; }
+  function leadMissing(l, from, to) {
+    var out = [];
+    for (var s = from; s < to; s++) (LEADS.REQUIRED[s] || []).forEach(function (k) { if (!leadField(l, k).trim() && out.indexOf(k) < 0) out.push(k); });
+    return out;
+  }
+  function leadSetField(l, k, v, now) {
+    var o = Object.assign({}, l);
+    if (k === 'name') o.name = v; else { o.f = Object.assign({}, o.f); o.f[k] = v; }
+    o.updatedAt = now; return o;
+  }
+  function leadMove(l, to, now) {
+    var o = Object.assign({}, l), from = leadStage(l);
+    o.stage = to; o.updatedAt = now; leadPush(o, 'Стадия: ' + LEADS.STAGES[from - 1].name + ' → ' + LEADS.STAGES[to - 1].name, now); return o;
+  }
+  function leadToLater(l, laterIdx, next, now) {
+    var o = Object.assign({}, l); o.status = 'later'; o.later = laterIdx; o.f = Object.assign({}, o.f, { next: next || '' }); o.updatedAt = now;
+    leadPush(o, 'Долгострой: ' + LEADS.LATER[laterIdx] + (next ? ', связаться ' + next : ''), now); return o;
+  }
+  function leadToLost(l, reason, now) {
+    var o = Object.assign({}, l); o.status = 'lost'; o.reason = reason; o.updatedAt = now; leadPush(o, 'Не прошёл: ' + reason, now); return o;
+  }
+  function leadBack(l, now) {
+    var o = Object.assign({}, l); o.status = 'lead'; delete o.later; delete o.reason; o.updatedAt = now; leadPush(o, 'Возвращён в воронку', now); return o;
+  }
+  // лид становится проектом на первой стадии проектов; карточка и история переходят в проект, лид помечается «won»
+  function leadConvert(l, projectKey, projectsMeta, now) {
+    var key = String(projectKey || '').trim();
+    if (l.status === 'won') return { error: 'Этот лид уже стал проектом «' + (l.projectKey || '') + '»' };
+    if (!key) return { error: 'Укажите название проекта' };
+    if (projectsMeta && projectsMeta[key]) return { error: 'Проект «' + key + '» уже есть: выберите другое название' };
+    var miss = leadMissing(l, leadStage(l), 5);
+    if (miss.length) return { error: 'Чтобы создать проект, заполните: ' + miss.map(leadFieldLabel).join(', '), missing: miss };
+    var f = {}; ['client', 'phone', 'address', 'next'].forEach(function (k) { var v = leadField(l, k); if (v) f[k] = v; });
+    var project = { status: 'work', stage: CRM.FIRST, f: f, lead: { id: l.id, name: l.name, f: Object.assign({}, l.f) }, hist: [{ at: now, t: 'Создан из лида «' + (l.name || '') + '»' }].concat(l.hist || []).slice(0, 60), updatedAt: now };
+    var lead = Object.assign({}, l); lead.status = 'won'; lead.projectKey = key; lead.updatedAt = now; leadPush(lead, 'Создан проект «' + key + '»', now);
+    return { lead: lead, project: project };
+  }
+  function mergeLeads(local, remote) {
+    var out = {}, k;
+    for (k in (local || {})) out[k] = local[k];
+    for (k in (remote || {})) if (!out[k] || (remote[k].updatedAt || '') > (out[k].updatedAt || '')) out[k] = remote[k];
+    return out;
+  }
+  function leadsToList(map) { return Object.keys(map || {}).sort().map(function (k) { return map[k]; }); }
+  function leadsFromList(list) { var m = {}; (list || []).forEach(function (l) { if (l && l.id) m[l.id] = l; }); return m; }
+  function leadsBoard(leads, o) {
+    o = o || {};
+    var todayIso = o.today || today(), q = (o.query || '').toLowerCase(), byStage = {}, later = [], lost = [], won = 0, total = 0;
+    Object.keys(leads || {}).forEach(function (id) {
+      var l = leads[id];
+      if (q && (leadField(l, 'name') + ' ' + leadField(l, 'client') + ' ' + leadField(l, 'phone')).toLowerCase().indexOf(q) < 0) return;
+      if (l.status === 'won') { won++; return; }
+      var next = leadField(l, 'next'), card = { id: l.id, name: l.name || 'Без названия', client: leadField(l, 'client'), phone: leadField(l, 'phone'), source: leadField(l, 'source'), next: next, late: !!next && next < todayIso, priceFrom: Number(leadField(l, 'priceFrom')) || 0, priceTo: Number(leadField(l, 'priceTo')) || 0, stage: leadStage(l), later: l.later, reason: l.reason || '', updatedAt: l.updatedAt || '' };
+      if (l.status === 'later') later.push(card); else if (l.status === 'lost') lost.push(card); else { (byStage[card.stage] = byStage[card.stage] || []).push(card); total++; }
+    });
+    function byNext(a, b) { if (!a.next !== !b.next) return a.next ? -1 : 1; if (a.next !== b.next) return a.next < b.next ? -1 : 1; return a.name.localeCompare(b.name, 'ru'); }
+    var stages = LEADS.STAGES.map(function (s) { return { n: s.n, name: s.name, cards: (byStage[s.n] || []).sort(byNext) }; });
+    later.sort(byNext); lost.sort(function (a, b) { return a.updatedAt < b.updatedAt ? 1 : -1; });
+    return { stages: stages, later: later, lost: lost, won: won, total: total };
+  }
   function renameArticlePatches(records, oldName, newName) {
     var o = lc(oldName), out = [];
     records.forEach(function (r) { if (r.article && lc(r.article) === o && r.article !== newName) out.push({ id: r.id, patch: { article: newName } }); });
@@ -949,7 +1027,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
 
   /* ---------- копии ---------- */
-  var BACKUP_VERSION = 1;
+  var BACKUP_VERSION = 2;
   function backupObject(state) {
     return { app: 'kubcrafter-money', version: BACKUP_VERSION, createdAt: nowISO(), namespace: state.namespace || '',
       records: state.records, log: state.log || [], decisions: state.decisions || [], meta: state.meta || {} };
@@ -1024,7 +1102,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };
@@ -1110,8 +1188,8 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   var S = {
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
-    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    admin: false, projMode: 'board', artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, leads: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
+    admin: false, projMode: 'board', leadMode: 'funnel', leadQuery: '', lcard: null, artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -1121,7 +1199,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     S.log = jparse(lsGet(pref() + 'log'), []);
     S.decisions = jparse(lsGet(pref() + 'decisions'), []);
     var meta = jparse(lsGet(pref() + 'meta'), {});
-    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', stmUrl: meta.stmUrl || '', stmUrlAt: meta.stmUrlAt || '', stmFiles: meta.stmFiles || {}, stmCheckedAt: meta.stmCheckedAt || '', projects: meta.projects || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
+    S.meta = { ignoredKeys: meta.ignoredKeys || [], dirty: meta.dirty || {}, lastBackupAt: meta.lastBackupAt || '', statements: meta.statements || [], lastPull: meta.lastPull || '', stmUrl: meta.stmUrl || '', stmUrlAt: meta.stmUrlAt || '', stmFiles: meta.stmFiles || {}, stmCheckedAt: meta.stmCheckedAt || '', projects: meta.projects || {}, leads: meta.leads || {}, articles: meta.articles || [], deletedArticles: meta.deletedArticles || [], synced: meta.synced || {} };
     if (!S.records.length) S.meta.lastPull = ''; // на устройстве записей нет: берём всё из облака
     ensureCatalogNow(true); persist();
   }
@@ -1199,10 +1277,10 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
   function syncMeta() {
     return syncDoc('state', function () {
-      return { articles: S.meta.articles, deletedArticles: S.meta.deletedArticles, projects: KC.projectsToList(S.meta.projects) };
+      return { articles: S.meta.articles, deletedArticles: S.meta.deletedArticles, projects: KC.projectsToList(S.meta.projects), leads: KC.leadsToList(S.meta.leads) };
     }, function (r) {
       var m = KC.mergeArticles(S.meta.articles, S.meta.deletedArticles, r.articles || [], r.deletedArticles || []);
-      S.meta.articles = m.articles; S.meta.deletedArticles = m.deleted; S.meta.projects = KC.mergeProjects(S.meta.projects, KC.projectsFromList(r.projects || []));
+      S.meta.articles = m.articles; S.meta.deletedArticles = m.deleted; S.meta.projects = KC.mergeProjects(S.meta.projects, KC.projectsFromList(r.projects || [])); S.meta.leads = KC.mergeLeads(S.meta.leads, KC.leadsFromList(r.leads || []));
     }).then(function () {
       return syncDoc('decisions', function () {
         return { decisions: S.decisions, ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements };
@@ -1255,7 +1333,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>', plus: '<path d="M12 5v14M5 12h14"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>', trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
     moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-    ops: '<path d="M4 6h16M4 12h16M4 18h10"/>', proj: '<path d="M3 7h6l2 2h10v10H3z"/>', stm: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>', cfg: '<path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2M21 3v6h-6"/>',
+    ops: '<path d="M4 6h16M4 12h16M4 18h10"/>', proj: '<path d="M3 7h6l2 2h10v10H3z"/>', lead: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>', stm: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>', cfg: '<path d="M12 3a9 9 0 1 0 9 9M12 7v5l3 2M21 3v6h-6"/>',
     gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>', swap: '<path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4"/>', wifi: '<path d="M2 8.8a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 20h.01M3 3l18 18"/>'
   };
   function svg(name, size) { size = size || 20; return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICON[name] + '</svg>'; }
@@ -1730,7 +1808,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
 
   /* ---------- CRM: канбан проектов ---------- */
   var DESK = !!(window.matchMedia && matchMedia('(hover:hover) and (pointer:fine)').matches); // перетаскивание только мышью; на телефоне стадии меняются кнопками в карточке
-  var cfTimer = null, dragKey = null;
+  var cfTimer = null, dragKey = null, dragLead = null;
   function cfFlush() { if (cfTimer) { clearTimeout(cfTimer); cfTimer = null; persist(); } }
   function cfInput(k, el) {
     var key = pkey(); if (!key) return;
@@ -1760,17 +1838,19 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (r.ok) { render(); toast('«' + key + '» → ' + KC.crmStageInfo(to).name); }
   }
   function onDragStart(e) {
-    var t = e.target.closest ? e.target.closest('.kcard[data-key]') : null; if (!t) return;
-    dragKey = t.getAttribute('data-key');
-    try { e.dataTransfer.setData('text/plain', dragKey); e.dataTransfer.effectAllowed = 'move'; } catch (x) {}
+    var tl = e.target.closest ? e.target.closest('.kcard[data-lead]') : null, t = tl || (e.target.closest ? e.target.closest('.kcard[data-key]') : null); if (!t) return;
+    if (tl) { dragLead = tl.getAttribute('data-lead'); dragKey = null; } else { dragKey = t.getAttribute('data-key'); dragLead = null; }
+    try { e.dataTransfer.setData('text/plain', dragLead || dragKey); e.dataTransfer.effectAllowed = 'move'; } catch (x) {}
     t.classList.add('drag');
   }
-  function onDragEnd() { dragKey = null; document.querySelectorAll('.kcard.drag,.kst.over').forEach(function (n) { n.classList.remove('drag'); n.classList.remove('over'); }); }
-  function onDragOver(e) { if (!dragKey) return; var z = e.target.closest ? e.target.closest('.kst') : null; if (!z) return; e.preventDefault(); z.classList.add('over'); }
+  function onDragEnd() { dragKey = null; dragLead = null; document.querySelectorAll('.kcard.drag,.kst.over').forEach(function (n) { n.classList.remove('drag'); n.classList.remove('over'); }); }
+  function dropZone(e) { var z = e.target.closest ? e.target.closest('.kst') : null; if (!z) return null; if (dragLead ? !z.hasAttribute('data-lstage') : !z.hasAttribute('data-stage')) return null; return z; }
+  function onDragOver(e) { if (!dragKey && !dragLead) return; var z = dropZone(e); if (!z) return; e.preventDefault(); z.classList.add('over'); }
   function onDragLeave(e) { var z = e.target.closest ? e.target.closest('.kst') : null; if (z && !z.contains(e.relatedTarget)) z.classList.remove('over'); }
   function onDrop(e) {
-    if (!dragKey) return; var z = e.target.closest ? e.target.closest('.kst') : null; if (!z) return;
-    e.preventDefault(); var key = dragKey; onDragEnd(); crmDrop(key, +z.getAttribute('data-stage'));
+    if (!dragKey && !dragLead) return; var z = dropZone(e); if (!z) return;
+    e.preventDefault(); var key = dragKey, lead = dragLead; onDragEnd();
+    if (lead) ldDrop(lead, +z.getAttribute('data-lstage')); else crmDrop(key, +z.getAttribute('data-stage'));
   }
   function crmTile(c) {
     var late = c.next && c.next < KC.today();
@@ -1810,6 +1890,149 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     }).join('');
     var hist = (pm.hist || []).slice(0, 8).map(function (x) { return '<div class="small"><span class="mu">' + esc(ruDate(x.at)) + '</span> ' + esc(x.t) + '</div>'; }).join('');
     return head + secs + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История стадий</div>' + hist + '</div>' : '');
+  }
+
+  /* ---------- CRM: лиды ---------- */
+  var ldTimer = null;
+  function ldFlush() { if (ldTimer) { clearTimeout(ldTimer); ldTimer = null; persist(); } }
+  function ldCur() { return S.lcard && S.lcard.id ? S.meta.leads[S.lcard.id] || null : null; }
+  function ldInput(k, el) {
+    var l = ldCur(); if (!l) return;
+    S.meta.leads[l.id] = KC.leadSetField(l, k, el.value, KC.nowISO());
+    var ms = S.lcard.missing || [], i = ms.indexOf(k); if (i >= 0 && el.value.trim()) { ms.splice(i, 1); el.classList.remove('bad'); }
+    if (ldTimer) clearTimeout(ldTimer);
+    ldTimer = setTimeout(function () { ldTimer = null; persist(); }, 500);
+  }
+  function ldMoveTo(id, to) {
+    var l = S.meta.leads[id]; if (!l || l.status !== 'lead') return { ok: false };
+    var from = KC.leadStage(l); if (to === from || to < 1 || to > 4) return { ok: false };
+    var miss = to > from ? KC.leadMissing(l, from, to) : [];
+    if (miss.length) return { ok: false, missing: miss };
+    S.meta.leads[id] = KC.leadMove(l, to, KC.nowISO());
+    addLog('lead', 'Лид «' + l.name + '»: стадия «' + KC.LEADS.STAGES[from - 1].name + '» → «' + KC.LEADS.STAGES[to - 1].name + '»', '');
+    persist(); return { ok: true };
+  }
+  function ldDrop(id, to) {
+    var r = ldMoveTo(id, to);
+    if (r.missing) { S.lcard = { id: id, missing: r.missing, panel: '' }; renderLCard(); return toast('Чтобы перенести в «' + KC.LEADS.STAGES[to - 1].name + '», заполните: ' + r.missing.map(KC.leadFieldLabel).join(', ')); }
+    if (r.ok) { render(); toast('Стадия: ' + KC.LEADS.STAGES[to - 1].name); }
+  }
+  function ldTile(c) {
+    var price = c.priceFrom || c.priceTo ? 'цена ' + (c.priceFrom ? 'от ' + money(c.priceFrom * 100) : '') + (c.priceTo ? ' до ' + money(c.priceTo * 100) : '') : '';
+    var who = [c.client, c.phone].filter(Boolean).map(esc).join(' · ');
+    return '<button type="button" class="kcard glass" data-act="ld-open" data-id="' + esc(c.id) + '" data-lead="' + esc(c.id) + '"' + (DESK ? ' draggable="true"' : '') + '>' +
+      '<span class="kt">' + esc(c.name) + '</span>' + (who ? '<span class="tiny mu">' + who + '</span>' : '') + (c.source ? '<span class="tiny mu">Источник: ' + esc(c.source) + '</span>' : '') + (price ? '<span class="tiny num">' + price + '</span>' : '') +
+      (c.next ? '<span class="tiny ' + (c.late ? 'neg bold' : 'mu') + '">Контакт ' + esc(ruDate(c.next)) + (c.late ? ' (просрочен)' : '') + '</span>' : '<span class="tiny" style="color:var(--warntx);font-weight:600">Нет даты контакта</span>') + '</button>';
+  }
+  function ldRow(c, extra) {
+    return '<button type="button" class="op glass" data-act="ld-open" data-id="' + esc(c.id) + '"><div style="flex:1;min-width:0"><div class="t">' + esc(c.name) + '</div><div class="s">' + extra + '</div></div>' + (c.next ? '<div class="s num ' + (c.late ? 'neg bold' : '') + '">' + esc(ruDate(c.next)) + '</div>' : '') + '</button>';
+  }
+  function viewLeads() {
+    var b = KC.leadsBoard(S.meta.leads, { query: S.leadQuery, today: KC.today() }), L = KC.LEADS;
+    var out = '<div class="row between"><div class="h2" style="margin:0">Лиды</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
+    out += '<div class="searchbox">' + svg('search', 18) + '<input id="lq" class="input" type="search" enterkeyhint="search" placeholder="Поиск по названию, клиенту, телефону" value="' + esc(S.leadQuery) + '" autocomplete="off"></div>';
+    out += '<div class="wsel" role="group" aria-label="Вид лидов">' + [['funnel', 'Воронка', b.total], ['later', 'Долгострой', b.later.length], ['lost', 'Не прошли', b.lost.length]].map(function (x) { return '<button type="button" class="chip ' + (S.leadMode === x[0] ? 'on' : '') + '" data-act="ld-mode" data-v="' + x[0] + '">' + x[1] + ' · ' + x[2] + '</button>'; }).join('') + '</div>';
+    out += '<button type="button" class="btn main" data-act="ld-new">+ Новая заявка</button>';
+    var body;
+    if (S.leadMode === 'later') {
+      body = b.later.length ? '<div class="list">' + b.later.map(function (c) { return ldRow(c, esc(L.LATER[c.later] || L.LATER[0]) + (c.client ? ' · ' + esc(c.client) : '')); }).join('') + '</div>' : '<div class="glass mu" style="padding:18px;text-align:center">В долгострое никого нет</div>';
+      body += '<div class="tiny mu">Клиенты с отложенным решением. Сначала те, кому пора позвонить.</div>';
+    } else if (S.leadMode === 'lost') {
+      body = b.lost.length ? '<div class="list">' + b.lost.map(function (c) { return ldRow(c, '<span class="pill bad">' + esc(c.reason) + '</span>' + (c.client ? ' ' + esc(c.client) : '')); }).join('') + '</div>' : '<div class="glass mu" style="padding:18px;text-align:center">Нет заявок, не прошедших квалификацию</div>';
+      body += '<div class="tiny mu">Причина обязательна: так накапливается справочник потерь.</div>';
+    } else {
+      body = '<div class="kb" id="kb">' + b.stages.map(function (s) {
+        return '<section class="kcol" aria-label="' + esc(s.name) + '"><div class="kch"><b>' + esc(s.name) + '</b><span class="pill">' + s.cards.length + '</span></div><div class="kst" data-lstage="' + s.n + '">' + (s.cards.length ? s.cards.map(ldTile).join('') : '<div class="kempty">пусто' + (DESK ? ', перетащите сюда' : '') + '</div>') + '</div></section>';
+      }).join('') + '</div><div class="tiny mu">' + (DESK ? 'Карточку можно перетащить на другую стадию. ' : 'Стадия меняется кнопками в карточке. ') + 'Заявок, ставших проектами: ' + b.won + '.</div>';
+    }
+    return out + '<div id="leadlist">' + body + '</div>';
+  }
+  function ldFieldHtml(l, miss, req) {
+    return KC.LEADS.FIELDS.map(function (sec) {
+      return '<div class="glass" style="padding:12px 14px"><div class="bold" style="margin-bottom:8px">' + esc(sec.title) + '</div><div class="cfgrid">' + sec.fields.map(function (fd) {
+        var k = fd[0], bad = miss.indexOf(k) >= 0, need = req.indexOf(k) >= 0;
+        return '<label class="cflabel"><span>' + esc(fd[1]) + (need ? ' <span class="' + (bad ? 'neg bold' : '') + '">· нужно для перехода</span>' : '') + '</span><input class="input' + (bad ? ' bad' : '') + '" id="lf-' + k + '" type="' + fd[2] + '" value="' + esc(KC.leadField(l, k)) + '" autocomplete="off"></label>';
+      }).join('') + '</div></div>';
+    }).join('');
+  }
+  function ldPanel(l, c) {
+    var L = KC.LEADS, err = c.err ? '<div class="banner warn" role="alert">' + esc(c.err) + '</div>' : '', cancel = '<button type="button" class="btn" data-act="ld-panel-cancel">Отмена</button>';
+    if (c.panel === 'win') return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Создать проект из этой заявки</div><div class="small mu">Проект появится на стадии «' + esc(KC.CRM.STAGES[0].name) + '», клиент, телефон, адрес и история перейдут в его карточку.</div><label class="cflabel"><span>Название проекта</span><input class="input" id="lp-pname" value="' + esc(l.name || '') + '" autocomplete="off"></label>' + err + '<div class="row gap8 wrap"><button type="button" class="btn main" data-act="ld-win-do">Создать проект</button>' + cancel + '</div></div>';
+    if (c.panel === 'later') return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold">В долгострой</div><label class="cflabel"><span>Этап</span><select class="input" id="lp-later">' + L.LATER.map(function (n, i) { return '<option value="' + i + '">' + esc(n) + '</option>'; }).join('') + '</select></label><label class="cflabel"><span>Когда связаться</span><input class="input" type="date" id="lp-ndate" value="' + esc(KC.leadField(l, 'next')) + '"></label><div class="row gap8 wrap"><button type="button" class="btn main" data-act="ld-later-do">В долгострой</button>' + cancel + '</div></div>';
+    if (c.panel === 'lost') return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Заявка не прошла</div><label class="cflabel"><span>Причина</span><select class="input" id="lp-reason">' + L.REASONS.map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('') + '</select></label><div class="row gap8 wrap"><button type="button" class="btn danger" data-act="ld-lost-do">Не прошла</button>' + cancel + '</div></div>';
+    return '';
+  }
+  function ldView(l) {
+    var c = S.lcard, L = KC.LEADS, st = KC.leadStage(l), miss = c.missing || [], req = L.REQUIRED[st] || [], head = '';
+    var hist = (l.hist || []).slice(0, 8).map(function (x) { return '<div class="small"><span class="mu">' + esc(ruDate(x.at)) + '</span> ' + esc(x.t) + '</div>'; }).join('');
+    var warn = miss.length ? '<div class="banner warn" role="alert">Чтобы перейти дальше, заполните: <b>' + miss.map(function (k) { return esc(KC.leadFieldLabel(k)); }).join(', ') + '</b>.</div>' : '';
+    if (l.status === 'lead') {
+      var seg = '<div class="seg" aria-hidden="true">' + L.STAGES.map(function (s) { return '<i class="' + (s.n < st ? 'on' : s.n === st ? 'cur' : '') + '"></i>'; }).join('') + '</div>';
+      var prev = st > 1 ? '<button type="button" class="btn" data-act="ld-prev">← ' + esc(L.STAGES[st - 2].name) + '</button>' : '';
+      var next = st < 4 ? '<button type="button" class="btn main" data-act="ld-next">' + esc(L.STAGES[st].name) + ' →</button>' : '';
+      head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px"><div class="bold" style="font-size:16px">Стадия: ' + esc(L.STAGES[st - 1].name) + '</div>' + seg + '<div class="row gap8 wrap">' + prev + next + '</div>' + (c.panel ? '' : warn) +
+        '<div class="row gap8 wrap"><button type="button" class="btn main" data-act="ld-panel" data-v="win">Договор заключён: создать проект</button><button type="button" class="btn" data-act="ld-panel" data-v="later">В долгострой</button><button type="button" class="btn danger" data-act="ld-panel" data-v="lost">Не прошла</button></div></div>' + ldPanel(l, c);
+    } else if (l.status === 'later') {
+      head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold" style="font-size:16px">Долгострой: ' + esc(L.LATER[l.later] || L.LATER[0]) + '</div><div class="small mu">Связаться: ' + (KC.leadField(l, 'next') ? esc(ruDate(KC.leadField(l, 'next'))) : 'дата не указана') + '</div><button type="button" class="btn main" data-act="ld-back">Вернуть в воронку</button></div>';
+    } else if (l.status === 'lost') {
+      head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold" style="font-size:16px">Не прошла: ' + esc(l.reason || '') + '</div><button type="button" class="btn main" data-act="ld-back">Вернуть в воронку</button></div>';
+    } else {
+      head = '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="bold" style="font-size:16px">Стала проектом «' + esc(l.projectKey || '') + '»</div><button type="button" class="btn main" data-act="ld-openproject">Открыть проект</button></div>';
+    }
+    return head + ldFieldHtml(l, miss, l.status === 'lead' ? req : []) + (hist ? '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px"><div class="bold">История</div>' + hist + '</div>' : '');
+  }
+  function ldNewForm() {
+    return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:10px"><label class="cflabel"><span>Название заявки</span><input class="input" id="lp-name" placeholder="Например: Кухня Иванова" autocomplete="off"></label><label class="cflabel"><span>Телефон</span><input class="input" id="lp-phone" autocomplete="off"></label><label class="cflabel"><span>Источник обращения</span><input class="input" id="lp-source" placeholder="Сайт, Авито, звонок…" autocomplete="off"></label><button type="button" class="btn main" data-act="ld-new-save">Создать заявку</button></div>';
+  }
+  function renderLCard() {
+    var c = S.lcard, host = $('#lcard');
+    if (!c) { if (host) host.remove(); return; }
+    if (!host) { host = document.createElement('div'); host.id = 'lcard'; document.body.appendChild(host); }
+    var l = ldCur(), title = c.isNew ? 'Новая заявка' : l ? (l.name || 'Без названия') : '', body = c.isNew ? ldNewForm() : l ? ldView(l) : '';
+    var labels = { lead: 'лид', later: 'долгострой', lost: 'не прошла', won: 'проект' }, pill = l ? '<span class="pill ' + (l.status === 'lost' ? 'bad' : l.status === 'won' ? '' : 'warn') + '">' + labels[l.status] + '</span>' : '<span></span>';
+    var prev = host.querySelector('.sheet'), top = prev ? prev.scrollTop : 0;
+    host.innerHTML = '<div class="sheet" style="z-index:40"><div class="inner"><div class="row between"><button type="button" class="iconbtn" data-act="ld-close" aria-label="Закрыть">' + svg('close', 22) + '</button><div class="bold" style="font-size:17px;text-align:center">' + esc(title) + '</div>' + pill + '</div>' + body + '</div></div>';
+    if (prev) host.querySelector('.sheet').scrollTop = top;
+  }
+  function ldAction(a, t) {
+    var c = S.lcard, now = KC.nowISO(), val = function (sel) { return (($(sel) || {}).value || '').trim(); };
+    if (a === 'ld-mode') { S.leadMode = t.getAttribute('data-v'); return render(); }
+    if (a === 'ld-new') { S.lcard = { id: null, isNew: true, missing: [], panel: '' }; return renderLCard(); }
+    if (a === 'ld-open') { S.lcard = { id: t.getAttribute('data-id'), missing: [], panel: '' }; return renderLCard(); }
+    if (a === 'ld-close') { ldFlush(); S.lcard = null; renderLCard(); if (S.view === 'leads') render(); return; }
+    if (a === 'ld-new-save') {
+      var nm = val('#lp-name'); if (!nm) return toast('Введите название заявки');
+      var f = {}; if (val('#lp-phone')) f.phone = val('#lp-phone'); if (val('#lp-source')) f.source = val('#lp-source');
+      var nl = KC.newLead(nm, f, now); S.meta.leads[nl.id] = nl; addLog('lead', 'Новая заявка «' + nm + '»', ''); persist();
+      S.lcard = { id: nl.id, missing: [], panel: '' }; render(); return toast('Заявка создана');
+    }
+    var l = ldCur(); if (!l || !c) return;
+    if (a === 'ld-prev' || a === 'ld-next') {
+      var to = KC.leadStage(l) + (a === 'ld-next' ? 1 : -1), r = ldMoveTo(l.id, to);
+      if (r.missing) { c.missing = r.missing; return renderLCard(); }
+      if (r.ok) { c.missing = []; render(); toast('Стадия: ' + KC.LEADS.STAGES[to - 1].name); } return;
+    }
+    if (a === 'ld-panel') { c.panel = t.getAttribute('data-v'); c.err = ''; c.missing = []; return renderLCard(); }
+    if (a === 'ld-panel-cancel') { c.panel = ''; c.err = ''; c.missing = []; return renderLCard(); }
+    if (a === 'ld-later-do') {
+      var idx = +val('#lp-later') || 0, nd = val('#lp-ndate');
+      S.meta.leads[l.id] = KC.leadToLater(l, idx, nd, now); addLog('lead', 'Лид «' + l.name + '» в долгострое: ' + KC.LEADS.LATER[idx], ''); persist();
+      c.panel = ''; render(); return toast('В долгострое');
+    }
+    if (a === 'ld-lost-do') {
+      var rs = val('#lp-reason') || KC.LEADS.REASONS[5];
+      S.meta.leads[l.id] = KC.leadToLost(l, rs, now); addLog('lead', 'Лид «' + l.name + '» не прошёл: ' + rs, ''); persist();
+      c.panel = ''; render(); return toast('Отмечено: не прошла (' + rs + ')');
+    }
+    if (a === 'ld-win-do') {
+      var key = val('#lp-pname'), res = KC.leadConvert(l, key, S.meta.projects, now);
+      if (res.error) { c.err = res.error; c.missing = res.missing || []; return renderLCard(); }
+      S.meta.projects[key] = res.project; S.meta.leads[l.id] = res.lead;
+      addLog('lead', 'Лид «' + l.name + '» стал проектом «' + key + '»', ''); persist();
+      c.panel = ''; c.err = ''; c.missing = []; render(); return toast('Создан проект «' + key + '»');
+    }
+    if (a === 'ld-back') { S.meta.leads[l.id] = KC.leadBack(l, now); addLog('lead', 'Лид «' + l.name + '» возвращён в воронку', ''); persist(); c.panel = ''; render(); return toast('Возвращено в воронку'); }
+    if (a === 'ld-openproject') { var pk = l.projectKey; ldFlush(); S.lcard = null; renderLCard(); S.view = 'projects'; render(); return openProjectCard(pk); }
   }
   function openProjectCard(name) { S.pcard = { project: name, step: 'view', custom: false, from: '', to: '', inc: {}, missing: [] }; renderPCard(); }
   function incomeIds() { var ids = []; for (var k in S.pcard.inc) if (S.pcard.inc[k]) ids.push(k); return ids; }
@@ -2146,7 +2369,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   function backupBase() { return 'kubcrafter-dengi-' + S.mode + '-' + KC.today(); }
   function markBackup() { S.meta.lastBackupAt = KC.nowISO(); addLog('backup', 'Сделана копия (' + S.records.length + ' записей)'); persist(); render(); }
   function doBackupJson() {
-    var obj = KC.backupObject({ records: S.records, log: S.log, decisions: S.decisions, meta: { ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements, projects: S.meta.projects, articles: S.meta.articles }, namespace: S.mode });
+    var obj = KC.backupObject({ records: S.records, log: S.log, decisions: S.decisions, meta: { ignoredKeys: S.meta.ignoredKeys, statements: S.meta.statements, projects: S.meta.projects, leads: S.meta.leads, articles: S.meta.articles }, namespace: S.mode });
     var name = backupBase() + '.json', text = JSON.stringify(obj);
     var file = null;
     try { file = new File([text], name, { type: 'application/json' }); } catch (e) {}
@@ -2181,7 +2404,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
       if (err) return toast(err);
       if (!confirm('Заменить текущие данные (' + S.records.length + ' записей) данными из копии (' + o.records.length + ' записей)?')) return;
       S.records = o.records; S.log = o.log || []; S.decisions = o.decisions || [];
-      S.meta.ignoredKeys = (o.meta && o.meta.ignoredKeys) || []; S.meta.statements = (o.meta && o.meta.statements) || []; S.meta.projects = (o.meta && o.meta.projects) || {}; S.meta.articles = (o.meta && o.meta.articles) || []; ensureCatalogNow(true);
+      S.meta.ignoredKeys = (o.meta && o.meta.ignoredKeys) || []; S.meta.statements = (o.meta && o.meta.statements) || []; S.meta.projects = (o.meta && o.meta.projects) || {}; S.meta.leads = (o.meta && o.meta.leads) || {}; S.meta.articles = (o.meta && o.meta.articles) || []; ensureCatalogNow(true);
       S.records.forEach(function (r) { S.meta.dirty[r.id] = 1; });
       addLog('restore', 'Восстановлено из копии от ' + ruDate(o.createdAt) + ' (' + o.records.length + ' записей)'); persist(); render(); toast('Данные восстановлены');
     };
@@ -2232,10 +2455,10 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   }
 
   /* ---------- общий рендер и события ---------- */
-  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['statements', 'Выписки', 'stm'], ['settings', 'Настройки', 'gear']];
+  var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['statements', 'Выписки', 'stm'], ['settings', 'Настройки', 'gear']];
   function render() {
     document.documentElement.setAttribute('data-theme', S.theme);
-    var body = S.view === 'projects' ? viewProjects() : S.view === 'statements' ? viewStatements() : S.view === 'settings' ? viewSettings() : viewOps();
+    var body = S.view === 'projects' ? viewProjects() : S.view === 'leads' ? viewLeads() : S.view === 'statements' ? viewStatements() : S.view === 'settings' ? viewSettings() : viewOps();
     var nav = '<nav class="nav" aria-label="Разделы">' + NAV.map(function (n) { return '<button type="button" class="' + (S.view === n[0] ? 'on' : '') + '" data-act="nav" data-v="' + n[0] + '">' + svg(n[2], 22) + n[1] + '</button>'; }).join('') + '</nav>';
     var fab = S.view === 'ops' ? '<button type="button" class="fab" data-act="newrec" aria-label="Новая операция">' + svg('plus', 26) + '</button>' : '';
     var kb0 = $('#kb'), kbl = kb0 ? kb0.scrollLeft : 0;
@@ -2243,6 +2466,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     var kb1 = $('#kb'); if (kb1 && kbl) kb1.scrollLeft = kbl;
     if (S.view === 'ops' && S.sync.text) { var sp = $('#syncpill'); if (sp) sp.textContent = S.sync.text; }
     if (S.pcard) renderPCard();
+    if (S.lcard) renderLCard();
   }
   function refreshOpsParts() {
     var l = $('#list'); if (l) l.innerHTML = listHtml();
@@ -2254,6 +2478,7 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (a === 'pick') { e.preventDefault(); var id = t.getAttribute('data-f'); setField(id, t.getAttribute('data-v')); hideSug(id); nextFocus(id); return; }
     if (a === 'confirmart') { e.preventDefault(); S.form.artSuggested = false; refreshArt(); return; }
     if (a.indexOf('pc-') === 0) { e.preventDefault(); return pcAction(a, t); }
+    if (a.indexOf('ld-') === 0) { e.preventDefault(); return ldAction(a, t); }
     if (a.indexOf('art-') === 0) { e.preventDefault(); if (a === 'art-open') return openArtSheet(t.getAttribute('data-id')); return artAction(a, t); }
     if (a === 'closeform') return closeForm();
     if (a === 'saveform') return saveForm();
@@ -2311,6 +2536,8 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
   function onInput(e) {
     var id = e.target.id;
     if (id && id.indexOf('cf-') === 0 && S.pcard) { cfInput(id.slice(3), e.target); return; }
+    if (id && id.indexOf('lf-') === 0 && S.lcard) { ldInput(id.slice(3), e.target); return; }
+    if (id === 'lq') { S.leadQuery = e.target.value; if ($('#leadlist')) { var keepL = S.leadQuery; render(); var elL = $('#lq'); if (elL) { elL.focus(); elL.setSelectionRange(keepL.length, keepL.length); } } return; }
     if (id === 'a-name' && S.artSheet) { S.artSheet.name = e.target.value; return; }
     if (id === 'q') { S.query = e.target.value; return refreshOpsParts(); }
     if (id === 'pq') { S.projQuery = e.target.value; var l = $('#projlist'); if (l) { var keep = S.projQuery; render(); var el = $('#pq'); if (el) { el.focus(); el.setSelectionRange(keep.length, keep.length); } } return; }
