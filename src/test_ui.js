@@ -141,7 +141,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   ok('promos record added from bank on request', promosBank === 1, promosBank);
 
   // 10. карточка проекта и завершение проекта
-  await page.click('.nav button[data-v="projects"]');
+  await page.click('.nav button[data-v="projects"]'); await page.click('button[data-act="projmode"][data-v="list"]');
   ok('projects listed', (await page.locator('#projlist .op').count()) >= 3);
   const firstProj = page.locator('#projlist .op[data-p]:not([data-p="__none__"])').first();
   const projName = await firstProj.getAttribute('data-p');
@@ -189,7 +189,7 @@ const ok = (name, cond, info) => { if (cond) pass++; else { fail++; console.log(
   // переход в настройки статей
   await page.click('#pcard button[data-act="pc-settings"]');
   ok('settings opened from completion', (await page.locator('#pcard .sheet').count()) === 0 && (await page.locator('text=Справочник статей').count()) >= 1);
-  await page.click('.nav button[data-v="projects"]');
+  await page.click('.nav button[data-v="projects"]'); await page.click('button[data-act="projmode"][data-v="list"]');
   ok('done pill in list', (await page.locator('#projlist .pill:has-text("завершён")').count()) === 1);
   await firstProj.click();
   await page.click('#pcard button[data-act="pc-reopen"]');

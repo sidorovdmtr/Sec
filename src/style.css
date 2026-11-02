@@ -120,3 +120,22 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
  .tbl .dayh{text-align:center}
 }
 .linkbtn{background:none;border:0;padding:0;color:var(--acclink);text-decoration:underline;font:inherit;cursor:pointer}
+/* CRM: канбан проектов */
+.kb{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:8px;-webkit-overflow-scrolling:touch;align-items:flex-start}
+.kcol{flex:0 0 min(88vw,320px);scroll-snap-align:start;display:flex;flex-direction:column;gap:10px}
+.kch{display:flex;align-items:center;justify-content:space-between;padding:0 4px;font-size:15px}
+.kst{display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:16px;border:1px dashed var(--div);min-height:44px}
+.kst.over{border-color:var(--chiponb);background:var(--chiponbg)}
+.ksh{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:600;color:var(--mu)}
+.kcard{display:flex;flex-direction:column;gap:6px;padding:10px 12px;text-align:left;width:100%;cursor:pointer}
+.kcard.drag{opacity:.4}
+.kcard .kt{font-size:15px;font-weight:600;line-height:1.25}
+.kcard .track{margin-top:0}
+.kempty{font-size:12px;color:var(--mu);padding:2px 4px}
+.seg{display:flex;gap:3px}.seg i{flex:1;height:6px;border-radius:3px;background:var(--track)}.seg i.on{background:var(--acc1)}.seg i.cur{background:var(--acc2)}
+.cfgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.cflabel{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mu);min-width:0}
+.input.bad{border-color:var(--neg);border-width:2px}
+@media (min-width:900px){
+ .kcol{flex:1 1 0;min-width:240px}
+}

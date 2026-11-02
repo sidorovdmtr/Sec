@@ -77,7 +77,7 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   ok('A sees renamed article in catalog and records', renamedA.cat && renamedA.recs > 0 && renamedA.old === 0, renamedA);
 
   // 4. A завершает проект -> B видит статус
-  await A.page.click('.nav button[data-v="projects"]');
+  await A.page.click('.nav button[data-v="projects"]'); await A.page.click('button[data-act="projmode"][data-v="list"]');
   const pname = await A.page.locator('#projlist .op[data-p]:not([data-p="__none__"])').first().getAttribute('data-p');
   await A.page.locator('#projlist .op[data-p]:not([data-p="__none__"])').first().click();
   await A.page.click('#pcard button[data-act="pc-done"]'); await A.page.click('#pcard button[data-act="pc-useperiod"]');
