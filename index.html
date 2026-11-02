@@ -2005,7 +2005,13 @@ html{touch-action:manipulation;-webkit-text-size-adjust:100%}
     if (a === 'planned') { S.form.planned = !S.form.planned; renderForm(); return; }
     if (a === 'deleterec') return deleteRec(S.form.editId);
     if (a === 'closemodal') { S.modal = null; return renderModal(); }
-    if (a === 'runstm') { var m = S.modal, rows = KC.rowsFromTable(m.table, m.header, m.map).rows; S.modal = null; renderModal(); return applyStatement(m.wallet, rows, m.name); }
+    if (a === 'runstm') {
+      var m = S.modal, rows = KC.rowsFromTable(m.table, m.header, m.map).rows;
+      // как у кнопки синхронизации: сначала цифры и подтверждение, данные вносятся только после «ОК»
+      var pv = previewStatement(m.wallet, rows);
+      if (pv.changes && !confirm(previewText({ name: m.name, wallet: m.wallet }, pv))) return toast('Не внесено по вашему отказу. Проверьте колонки или закройте окно.');
+      S.modal = null; renderModal(); return applyStatement(m.wallet, rows, m.name);
+    }
     e.preventDefault && t.tagName === 'A' && e.preventDefault();
     if (a === 'nav') { S.view = t.getAttribute('data-v'); return render(); }
     if (a === 'gocopies') { S.view = 'settings'; S.settingsTab = 'data'; return render(); }

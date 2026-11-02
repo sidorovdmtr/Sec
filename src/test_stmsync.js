@@ -117,6 +117,22 @@ const BROKEN = book([['что-то'], ['не выписка']]);
   ok('declined: nothing added, file not remembered', (await page.evaluate(() => KCApp.S.records.length)) === nBeforeDecline && (await page.evaluate(() => Object.keys(KCApp.S.meta.stmFiles).length)) === filesBefore && (await toastTxt()).indexOf('по вашему отказу') >= 0, await toastTxt());
   await page.click('button[data-act="stmsync"]'); await page.waitForTimeout(800);
   ok('asked again and accepted: record added', (await page.evaluate(() => KCApp.S.records.length)) === nBeforeDecline + 1, await toastTxt());
+  // ручная загрузка файла: то же окно с цифрами, отказ ничего не вносит и оставляет окно колонок, подтверждение вносит, повтор даёт одни дубли
+  const MANUAL = book([['Выписка по счёту'], H, ['03.11.2026', '77', '1,111.00', '', 'АО «Ручной»', '', '', '', '', '', 'Оплата по счету 77', '', 'Платежное поручение']]);
+  await page.click('.nav button[data-v="statements"]');
+  const nM = await page.evaluate(() => KCApp.S.records.length); dialogs.length = 0;
+  await page.setInputFiles('input[data-stm="alfa"]', { name: 'ручная.xlsx', mimeType: 'application/octet-stream', buffer: MANUAL });
+  await page.waitForSelector('button[data-act="runstm"]');
+  declineNext = true;
+  await page.click('button[data-act="runstm"]'); await page.waitForTimeout(300);
+  ok('manual: preview shown', dialogs.length === 1 && /Добавить новых записей: 1 \(на сумму/.test(dialogs[0]) && /Внести эти данные\?/.test(dialogs[0]), dialogs[0]);
+  ok('manual: declined adds nothing, columns window stays', (await page.evaluate(() => KCApp.S.records.length)) === nM && (await page.locator('button[data-act="runstm"]').count()) === 1);
+  await page.click('button[data-act="runstm"]'); await page.waitForTimeout(400);
+  ok('manual: confirmed adds record and closes window', (await page.evaluate(() => KCApp.S.records.length)) === nM + 1 && (await page.locator('button[data-act="runstm"]').count()) === 0);
+  dialogs.length = 0;
+  await page.setInputFiles('input[data-stm="alfa"]', { name: 'ручная.xlsx', mimeType: 'application/octet-stream', buffer: MANUAL });
+  await page.waitForSelector('button[data-act="runstm"]'); await page.click('button[data-act="runstm"]'); await page.waitForTimeout(400);
+  ok('manual: repeat is duplicates only, no prompt, nothing added', dialogs.length === 0 && (await page.evaluate(() => KCApp.S.records.length)) === nM + 1, dialogs);
   // 7. Safari блокирует обычный запрос: инструмент переходит на загрузку скриптом-вставкой и всё равно читает выписку
   blockFetch = true;
   folder.push({ id: 'f4', name: 'Выписка_40702810626180001762_01.11.2026.xlsx', size: 7300, modified: '2026-11-04T09:00:00.000Z', buf: ALFA });
