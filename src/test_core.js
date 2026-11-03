@@ -600,11 +600,11 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('board: empty', KC.leadsBoard({}, {}).total, 0);
   // копия
   const back = JSON.parse(JSON.stringify(KC.backupObject({ records: [], meta: { projects: {}, leads: leads }, namespace: 't' })));
-  eq('backup version is 2', back.version, 2);
+  eq('backup version is 3', back.version, 3);
   eq('backup keeps leads', Object.keys(back.meta.leads).length, 6);
   eq('backup validates', KC.validateBackup(back), '');
   eq('old backup version 1 still validates', KC.validateBackup(Object.assign({}, back, { version: 1, meta: {} })), '');
-  eq('newer backup is refused', KC.validateBackup(Object.assign({}, back, { version: 3 })), 'Копия сделана более новой версией');
+  eq('newer backup is refused', KC.validateBackup(Object.assign({}, back, { version: 4 })), 'Копия сделана более новой версией');
 }
 
 // ---- CRM: доделки (рабочие дни, единая карточка проекта, закрытые в «Сдано») ----
@@ -659,6 +659,129 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('board: Рекламации zone holds the reopened project', z(19).map(c => c.key), ['Рекл']);
   eq('board: counters count only open projects, done is counted apart', [bd.total, bd.done, bd.groups[3].count], [2, 2, 2]);
   eq('board: search finds closed too', KC.crmBoard([], meta, { today: '2026-11-02', query: 'закрыт' }).done, 2);
+}
+
+// задачи: зоны, значения по умолчанию, будильник, срок и фактическая дата закрытия, слияние, привязка к карточкам
+{
+  const N1 = '2026-11-03T09:00:00.000Z', N2 = '2026-11-03T10:00:00.000Z';
+  eq('zones: five fixed zones', KC.TASKS.ZONES.map(z => z.name), ['Не распределены', 'Цех', 'Офис', 'Директор', 'Подрядчики']);
+  eq('zones: contractors zone is valid for a task', KC.newTask('x', { zone: 'contractors' }, N1).zone, 'contractors');
+  const a = KC.newTask('Заказать фурнитуру', { ownerType: 'project', ownerKey: 'Кухня Иванова' }, N1);
+  eq('task: zone defaults to «Не распределены»', [a.zone, KC.taskZone(a.zone).name], ['none', 'Не распределены']);
+  eq('task: starts open without close date', [a.status, a.doneAt, a.due, a.remind, a.desc, a.comment], ['open', '', '', '', '', '']);
+  eq('task: owner stored', [a.ownerType, a.ownerKey], ['project', 'Кухня Иванова']);
+  eq('task: unknown zone falls to «Не распределены»', KC.newTask('x', { zone: 'bogus' }, N1).zone, 'none');
+  eq('task: unknown owner type means no card', KC.newTask('x', { ownerType: 'client', ownerKey: 'k' }, N1).ownerType, '');
+  eq('task: zone can be set', KC.taskSet(a, 'zone', 'shop', N2).zone, 'shop');
+  eq('task: bad zone on set falls back', KC.taskSet(a, 'zone', 'zzz', N2).zone, 'none');
+  { const m1 = KC.taskMoveZone(a, 'shop', N2), m2 = KC.taskMoveZone(m1, 'shop', N2);
+    eq('task: move zone writes history', [m1.zone, m1.hist[0].t, m1.updatedAt], ['shop', 'Зона: Не распределены → Цех', N2]);
+    eq('task: move to the same zone changes nothing', [m2.hist.length, m2.zone], [m1.hist.length, 'shop']); }
+  eq('task: set does not mutate source', [a.zone, a.updatedAt], ['none', N1]);
+  const d = KC.taskDone(KC.taskSet(a, 'due', '2026-11-05', N1), N2);
+  eq('task: done writes fact date itself', [d.status, d.doneAt, d.due], ['done', N2, '2026-11-05']);
+  eq('task: reopen clears fact date', [KC.taskReopen(d, N2).status, KC.taskReopen(d, N2).doneAt], ['open', '']);
+  eq('task: history records create, done', [d.hist[0].t, d.hist[1].t], ['Выполнена', 'Задача создана']);
+  // будильник: сработал, когда время напоминания наступило и задача не закрыта
+  const r = KC.taskSet(a, 'remind', '2026-11-03T12:30', N1);
+  eq('alarm: before time is off', KC.taskAlarm(r, '2026-11-03T12:29'), false);
+  eq('alarm: at the time is on', KC.taskAlarm(r, '2026-11-03T12:30'), true);
+  eq('alarm: after the time is on', KC.taskAlarm(r, '2026-11-04T08:00'), true);
+  eq('alarm: done task has no alarm', KC.taskAlarm(KC.taskDone(r, N2), '2026-11-04T08:00'), false);
+  eq('alarm: no reminder means no alarm', KC.taskAlarm(a, '2030-01-01T00:00'), false);
+  eq('late: past due and open', KC.taskLate(KC.taskSet(a, 'due', '2026-11-02', N1), '2026-11-03'), true);
+  eq('late: due today is not late', KC.taskLate(KC.taskSet(a, 'due', '2026-11-03', N1), '2026-11-03'), false);
+  eq('late: done is never late', KC.taskLate(KC.taskDone(KC.taskSet(a, 'due', '2026-11-02', N1), N2), '2026-11-03'), false);
+  eq('nowLocal has minute precision', /^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(KC.nowLocal()), true);
+  // привязка к карточкам
+  const lead = KC.newLead('Заявка Петрова', {}, N1);
+  const b = KC.newTask('Позвонить', { ownerType: 'lead', ownerKey: lead.id, due: '2026-11-04', zone: 'office' }, N1);
+  const c = KC.newTask('Сверить смету', { ownerType: 'project', ownerKey: 'Кухня Иванова', due: '2026-11-01' }, N1);
+  const e = KC.taskDone(KC.newTask('Замер', { ownerType: 'project', ownerKey: 'Кухня Иванова' }, N1), N2);
+  const f = KC.newTask('Без карточки', { zone: 'director' }, N1);
+  const tasks = { [a.id]: r, [b.id]: b, [c.id]: c, [e.id]: e, [f.id]: f };
+  const o = { today: '2026-11-03', nowLocal: '2026-11-03T13:00', leads: { [lead.id]: lead } };
+  const pf = KC.tasksFor(tasks, 'project', 'Кухня Иванова', o);
+  eq('tasksFor: only this card, open by due then done', pf.list.map(t => t.title), ['Сверить смету', 'Заказать фурнитуру', 'Замер']);
+  eq('tasksFor: alarm count for card', pf.alarms, 1);
+  eq('tasksFor: lead card gets its own task', KC.tasksFor(tasks, 'lead', lead.id, o).list.map(t => t.title), ['Позвонить']);
+  eq('tasksFor: other project is empty', KC.tasksFor(tasks, 'project', 'Другой', o).list.length, 0);
+  const bd = KC.tasksBoard(tasks, Object.assign({ zone: 'all', status: 'open' }, o));
+  eq('board: open count and zone counters', [bd.openCount, bd.doneCount, bd.zoneCounts.all, bd.zoneCounts.none, bd.zoneCounts.shop, bd.zoneCounts.office, bd.zoneCounts.director, bd.zoneCounts.contractors], [4, 1, 4, 2, 0, 1, 1, 0]);
+  eq('board: sorted by due, no due last', bd.items.map(t => t.title), ['Сверить смету', 'Позвонить', 'Заказать фурнитуру', 'Без карточки']);
+  eq('board: lead owner name resolved', bd.items.find(t => t.title === 'Позвонить').owner, 'Заявка Петрова');
+  eq('board: zone filter', KC.tasksBoard(tasks, Object.assign({ zone: 'director', status: 'open' }, o)).items.map(t => t.title), ['Без карточки']);
+  eq('board: done filter', KC.tasksBoard(tasks, Object.assign({ zone: 'all', status: 'done' }, o)).items.map(t => t.title), ['Замер']);
+  eq('board: search by card name', KC.tasksBoard(tasks, Object.assign({ status: 'open', query: 'петрова' }, o)).items.map(t => t.title), ['Позвонить']);
+  eq('board: flags late and alarm', bd.items.map(t => [t.late, t.alarm]), [[true, false], [false, false], [false, true], [false, false]]);
+  // слияние и список для облака
+  const older = KC.taskSet(a, 'title', 'Старое', N1), newer = KC.taskSet(a, 'title', 'Новое', N2);
+  eq('merge: newer by updatedAt wins', KC.mergeTasks({ [a.id]: older }, { [a.id]: newer })[a.id].title, 'Новое');
+  eq('merge: local newer kept', KC.mergeTasks({ [a.id]: newer }, { [a.id]: older })[a.id].title, 'Новое');
+  eq('merge: union of ids', Object.keys(KC.mergeTasks({ [a.id]: a }, { [b.id]: b })).length, 2);
+  eq('list round trip', Object.keys(KC.tasksFromList(KC.tasksToList(tasks))).sort(), Object.keys(tasks).sort());
+  // копия с задачами
+  const bk = KC.backupObject({ records: [], meta: { tasks } });
+  eq('backup carries tasks', [Object.keys(bk.meta.tasks).length, KC.validateBackup(bk)], [5, '']);
+  eq('backup v2 without tasks still valid', KC.validateBackup({ app: 'kubcrafter-money', version: 2, records: [], meta: {} }), '');
+}
+
+// перенос из дашборда заказов: стадии, зоны, сверка названий, дубли, склейка с картой, повторный перенос
+{
+  const N = '2026-11-03T10:00:00.000Z';
+  eq('dash stage: 1..11 -> 5..15', [1, 2, 9, 11].map(KC.dashStage), [5, 6, 13, 15]);
+  eq('dash stage: 12 Сдано -> 18', KC.dashStage(12), 18);
+  eq('dash stage: unknown -> first', [0, 13, null, undefined, 'x', 2.5].map(KC.dashStage), [5, 5, 5, 5, 5, 5]);
+  eq('dash zones', ['unassigned', 'workshop', 'office', 'contractors', null, 'zzz'].map(KC.dashZone), ['none', 'shop', 'office', 'contractors', 'none', 'none']);
+  eq('dash list: accepts array and {projects}', [KC.dashList([{ name: 'A' }, null, { name: '  ' }]).length, KC.dashList({ projects: [{ name: 'B' }] }).length, KC.dashList(null).length], [1, 1, 0]);
+  const dash = [
+    { _id: 'd1', name: 'Кухня Тестова', stage: 5, startDate: '2026-10-05', workDays: 10, dueDate: '2026-10-19', tasks: [{ id: 't1', text: 'Замер', done: true, zone: 'office' }, { id: 't2', text: 'Заказ', done: false }, { id: 't3', text: '  ' }] },
+    { _id: 'd2', name: 'кухня  тестова', stage: 1, startDate: '2026-11-01', dueDate: '2026-12-01', tasks: [] },
+    { _id: 'd3', name: 'Шкаф Образцов', stage: 12, startDate: '2026-08-01', workDays: 5, dueDate: '2026-08-10', tasks: [{ id: 't1', text: 'Монтаж', done: true, zone: 'contractors' }] },
+    { _id: 'd4', name: 'Прихожая Пустая', stage: 1, startDate: '', dueDate: '', tasks: [] },
+    { _id: 'd5', name: 'Санузел Тестовый', stage: 9, startDate: '2026-09-01', dueDate: '2026-09-30', tasks: [] }
+  ];
+  const meta0 = {
+    'Шкафы Образцов': { status: 'work', stage: 5, f: {}, hist: [], updatedAt: N },
+    'Санузел тестовый': { status: 'work', stage: 8, f: { start: '2026-09-02', due: '2026-10-01' }, hist: [], updatedAt: N }
+  };
+  const recs = [R({ wallet: 'alfa', amount: -100000, date: '2026-10-10', project: 'КУХНЯ ТЕСТОВА' })];
+  const p1 = KC.dashPlan(dash, meta0, recs, {});
+  const byName = (pl, n) => pl.items.find(i => i.srcName === n);
+  eq('plan totals', [p1.totals.projects, p1.totals.merge, p1.totals.create], [5, 2, 3]);
+  eq('plan: name found in operations (case, spaces) merges into it', [p1.items[0].action, p1.items[0].target, p1.items[0].hasCard], ['merge', 'КУХНЯ ТЕСТОВА', false]);
+  eq('plan: second same name in file gets (2), not merged twice', [p1.items[1].name, p1.items[1].action, p1.items[1].notes.length], ['кухня тестова (2)', 'new', 1]);
+  eq('plan: the earlier start keeps the name', byName(p1, 'Кухня Тестова').name, 'КУХНЯ ТЕСТОВА');
+  eq('plan: similar existing card is offered, not merged on its own', [p1.items[2].action, p1.items[2].similar], ['new', ['Шкафы Образцов']]);
+  eq('plan: card with another stage keeps it and says so', [p1.items[4].action, p1.items[4].keepStage, p1.items[4].notes.some(n => n.indexOf('осталась вашей') >= 0)], ['merge', true, true]);
+  eq('plan: filled card dates are kept and reported', [Object.keys(p1.items[4].f), p1.items[4].notes.some(n => n.indexOf('Оставлены ваши значения') >= 0)], [['due'].filter(() => false), true]);
+  eq('plan: due is recomputed by work days when start and days exist', byName(p1, 'Кухня Тестова').f.due, '2026-10-19');
+  eq('plan: no dates counted', p1.totals.noDates, 1);
+  eq('plan: tasks counted, empty text skipped', [p1.totals.tasks, p1.totals.tasksNew, p1.totals.done, p1.totals.open], [3, 3, 2, 1]);
+  const p2 = KC.dashPlan(dash, meta0, recs, {}, { 2: 'Шкафы Образцов', 3: '' });
+  eq('override: merge the similar one by choice', [p2.items[2].action, p2.items[2].target, p2.items[2].name, p2.items[2].similar.length], ['merge', 'Шкафы Образцов', 'Шкафы Образцов', 0]);
+  eq('override: empty means create a new card', p2.items[3].action, 'new');
+  // внесение
+  const ap = KC.dashApply(p2, meta0, {}, N), P = ap.projects;
+  eq('apply: new card on the mapped stage with fields and history', [P['Прихожая Пустая'].stage, P['Прихожая Пустая'].status, P['Прихожая Пустая'].hist[0].t], [5, 'work', 'Создана из дашборда заказов']);
+  eq('apply: «Сдано» from dashboard is stage 18, project stays open', [P['Шкафы Образцов'].stage, P['Шкафы Образцов'].status], [18, 'work']);
+  eq('apply: dates written to CRM fields', [P['Шкафы Образцов'].f.start, P['Шкафы Образцов'].f.workDays, P['Шкафы Образцов'].f.due], ['2026-08-01', '5', '2026-08-07']);
+  eq('apply: due that differs from the work-day count is reported and recomputed', byName(p2, 'Шкаф Образцов').notes.some(n => n.indexOf('отличается от расчёта') >= 0), true);
+  eq('apply: card kept its stage and dates', [P['Санузел тестовый'].stage, P['Санузел тестовый'].f.start, P['Санузел тестовый'].f.due], [8, '2026-09-02', '2026-10-01']);
+  eq('apply: project from operations got a card (dashboard stage 5 is our 9)', [P['КУХНЯ ТЕСТОВА'].stage, P['КУХНЯ ТЕСТОВА'].f.start], [9, '2026-10-05']);
+  const T = Object.values(ap.tasks);
+  eq('apply: tasks created and linked', [T.length, T.every(t => t.ownerType === 'project' && P[t.ownerKey])], [3, true]);
+  eq('apply: done task without fact date, zones mapped', [T.find(t => t.title === 'Замер').status, T.find(t => t.title === 'Замер').doneAt, T.find(t => t.title === 'Замер').zone, T.find(t => t.title === 'Монтаж').zone, T.find(t => t.title === 'Заказ').zone], ['done', '', 'office', 'contractors', 'none']);
+  const p3 = KC.dashPlan(dash, ap.projects, recs, ap.tasks, { 2: 'Шкафы Образцов', 3: '' });
+  const ap3 = KC.dashApply(p3, ap.projects, ap.tasks, N);
+  eq('repeat import: tasks are not duplicated', [p3.totals.tasksNew, p3.totals.tasksSkip, Object.keys(ap3.tasks).length], [0, 3, 3]);
+  // повтор без выбора вручную: карточки находятся по метке источника, ваша раскладка не трогается
+  const moved = Object.assign({}, ap.projects); moved['Шкафы Образцов'] = Object.assign({}, moved['Шкафы Образцов'], { stage: 12 }); moved['КУХНЯ ТЕСТОВА'] = Object.assign({}, moved['КУХНЯ ТЕСТОВА'], { stage: 7, f: Object.assign({}, moved['КУХНЯ ТЕСТОВА'].f, { due: '2026-12-31' }) });
+  const p4 = KC.dashPlan(dash, moved, recs, ap.tasks);
+  const ap4 = KC.dashApply(p4, moved, ap.tasks, N);
+  eq('repeat without choices: all cards found by source mark, no new cards', [p4.totals.merge, p4.totals.create, Object.keys(ap4.projects).length], [5, 0, Object.keys(ap.projects).length]);
+  eq('repeat: stage and dates set by you are not touched', [ap4.projects['Шкафы Образцов'].stage, ap4.projects['КУХНЯ ТЕСТОВА'].stage, ap4.projects['КУХНЯ ТЕСТОВА'].f.due], [12, 7, '2026-12-31']);
+  eq('repeat: no extra history lines', ap4.projects['КУХНЯ ТЕСТОВА'].hist.length, ap.projects['КУХНЯ ТЕСТОВА'].hist.length);
 }
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

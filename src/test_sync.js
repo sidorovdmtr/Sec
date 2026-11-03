@@ -105,6 +105,19 @@ const settle = (p) => p.waitForTimeout(1800).then(() => p.evaluate(() => window.
   const aSees = await A.page.evaluate(() => { const l = Object.values(KCApp.S.meta.leads)[0], p = KCApp.S.meta.projects['Облачный проект']; return { lead: l && l.status, key: l && l.projectKey, stage: p && p.stage, phone: p && p.f.phone, fromLead: p && p.lead && p.lead.name }; });
   ok('A sees the lead won and the project created on B', aSees.lead === 'won' && aSees.key === 'Облачный проект' && aSees.stage === 5 && aSees.phone === '+7 900 000-00-01' && aSees.fromLead === 'Облачная заявка', aSees);
 
+  // 4c. задачи: A создаёт задачу в карточке проекта, B видит и закрывает, A видит закрытие с фактической датой
+  await A.page.click('.nav button[data-v="tasks"]'); await A.page.click('button[data-act="tk-new"][data-ot=""]');
+  await A.page.selectOption('#tf-owner', 'p:Облачный проект'); await A.page.fill('#tf-title', 'Облачная задача'); await A.page.selectOption('#tf-zone', 'shop'); await A.page.fill('#tf-remind', '2026-11-03T08:00'); await A.page.fill('#tf-comment', 'из A');
+  await A.page.click('button[data-act="tk-save"]'); await A.page.click('#tcard button[data-act="tk-close"]'); await settle(A.page);
+  await B.page.reload(); await settle(B.page);
+  const bTask = await B.page.evaluate(() => { const t = Object.values(KCApp.S.meta.tasks)[0]; return t ? { title: t.title, zone: t.zone, owner: t.ownerKey, remind: t.remind, comment: t.comment, status: t.status } : null; });
+  ok('B sees task from A with zone, card, reminder and comment', bTask && bTask.title === 'Облачная задача' && bTask.zone === 'shop' && bTask.owner === 'Облачный проект' && bTask.remind === '2026-11-03T08:00' && bTask.comment === 'из A' && bTask.status === 'open', bTask);
+  await B.page.evaluate(() => { const t = Object.values(KCApp.S.meta.tasks)[0]; KCApp.S.meta.tasks[t.id] = KC.taskDone(t, new Date().toISOString()); KCApp.commit({}, 'create', 'задача выполнена'); });
+  await settle(B.page);
+  await A.page.reload(); await settle(A.page);
+  const aTask = await A.page.evaluate(() => { const t = Object.values(KCApp.S.meta.tasks)[0]; return { status: t.status, doneAt: !!t.doneAt }; });
+  ok('A sees the task done on B with fact date', aTask.status === 'done' && aTask.doneAt, aTask);
+
   // 5. решения по выписке: A загружает тестовую выписку, B решает, A видит
   await A.page.click('.nav button[data-v="settings"]'); await A.page.click('button[data-act="stab"][data-v="statements"]');
   await A.page.click('button[data-act="teststm"][data-w="alfa"]'); await settle(A.page);

@@ -17,7 +17,7 @@ function ok(name, cond, extra) { if (cond) { pass++; console.log('ok   ' + name)
     const has = async (sel) => (await page.locator(sel).count()) > 0;
 
     const navs = (await page.locator('.nav button').allInnerTexts()).map(x => x.trim());
-    ok(label + ': bottom nav has four sections', navs.join('|') === 'Операции|Проекты|Лиды|Настройки', navs);
+    ok(label + ': bottom nav has five sections', navs.join('|') === 'Операции|Проекты|Лиды|Задачи|Настройки', navs);
     ok(label + ': no statements button in nav', !(await has('.nav button[data-v="statements"]')));
     ok(label + ': nav fits the screen', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1 && [...document.querySelectorAll('.nav button')].every(b => b.getBoundingClientRect().width >= 56)));
 
