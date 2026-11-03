@@ -725,5 +725,63 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('backup carries tasks', [Object.keys(bk.meta.tasks).length, KC.validateBackup(bk)], [5, '']);
   eq('backup v2 without tasks still valid', KC.validateBackup({ app: 'kubcrafter-money', version: 2, records: [], meta: {} }), '');
 }
+
+// перенос из дашборда заказов: стадии, зоны, сверка названий, дубли, склейка с картой, повторный перенос
+{
+  const N = '2026-11-03T10:00:00.000Z';
+  eq('dash stage: 1..11 -> 5..15', [1, 2, 9, 11].map(KC.dashStage), [5, 6, 13, 15]);
+  eq('dash stage: 12 Сдано -> 18', KC.dashStage(12), 18);
+  eq('dash stage: unknown -> first', [0, 13, null, undefined, 'x', 2.5].map(KC.dashStage), [5, 5, 5, 5, 5, 5]);
+  eq('dash zones', ['unassigned', 'workshop', 'office', 'contractors', null, 'zzz'].map(KC.dashZone), ['none', 'shop', 'office', 'contractors', 'none', 'none']);
+  eq('dash list: accepts array and {projects}', [KC.dashList([{ name: 'A' }, null, { name: '  ' }]).length, KC.dashList({ projects: [{ name: 'B' }] }).length, KC.dashList(null).length], [1, 1, 0]);
+  const dash = [
+    { _id: 'd1', name: 'Кухня Тестова', stage: 5, startDate: '2026-10-05', workDays: 10, dueDate: '2026-10-19', tasks: [{ id: 't1', text: 'Замер', done: true, zone: 'office' }, { id: 't2', text: 'Заказ', done: false }, { id: 't3', text: '  ' }] },
+    { _id: 'd2', name: 'кухня  тестова', stage: 1, startDate: '2026-11-01', dueDate: '2026-12-01', tasks: [] },
+    { _id: 'd3', name: 'Шкаф Образцов', stage: 12, startDate: '2026-08-01', workDays: 5, dueDate: '2026-08-10', tasks: [{ id: 't1', text: 'Монтаж', done: true, zone: 'contractors' }] },
+    { _id: 'd4', name: 'Прихожая Пустая', stage: 1, startDate: '', dueDate: '', tasks: [] },
+    { _id: 'd5', name: 'Санузел Тестовый', stage: 9, startDate: '2026-09-01', dueDate: '2026-09-30', tasks: [] }
+  ];
+  const meta0 = {
+    'Шкафы Образцов': { status: 'work', stage: 5, f: {}, hist: [], updatedAt: N },
+    'Санузел тестовый': { status: 'work', stage: 8, f: { start: '2026-09-02', due: '2026-10-01' }, hist: [], updatedAt: N }
+  };
+  const recs = [R({ wallet: 'alfa', amount: -100000, date: '2026-10-10', project: 'КУХНЯ ТЕСТОВА' })];
+  const p1 = KC.dashPlan(dash, meta0, recs, {});
+  const byName = (pl, n) => pl.items.find(i => i.srcName === n);
+  eq('plan totals', [p1.totals.projects, p1.totals.merge, p1.totals.create], [5, 2, 3]);
+  eq('plan: name found in operations (case, spaces) merges into it', [p1.items[0].action, p1.items[0].target, p1.items[0].hasCard], ['merge', 'КУХНЯ ТЕСТОВА', false]);
+  eq('plan: second same name in file gets (2), not merged twice', [p1.items[1].name, p1.items[1].action, p1.items[1].notes.length], ['кухня тестова (2)', 'new', 1]);
+  eq('plan: the earlier start keeps the name', byName(p1, 'Кухня Тестова').name, 'КУХНЯ ТЕСТОВА');
+  eq('plan: similar existing card is offered, not merged on its own', [p1.items[2].action, p1.items[2].similar], ['new', ['Шкафы Образцов']]);
+  eq('plan: card with another stage keeps it and says so', [p1.items[4].action, p1.items[4].keepStage, p1.items[4].notes.some(n => n.indexOf('осталась вашей') >= 0)], ['merge', true, true]);
+  eq('plan: filled card dates are kept and reported', [Object.keys(p1.items[4].f), p1.items[4].notes.some(n => n.indexOf('Оставлены ваши значения') >= 0)], [['due'].filter(() => false), true]);
+  eq('plan: due is recomputed by work days when start and days exist', byName(p1, 'Кухня Тестова').f.due, '2026-10-19');
+  eq('plan: no dates counted', p1.totals.noDates, 1);
+  eq('plan: tasks counted, empty text skipped', [p1.totals.tasks, p1.totals.tasksNew, p1.totals.done, p1.totals.open], [3, 3, 2, 1]);
+  const p2 = KC.dashPlan(dash, meta0, recs, {}, { 2: 'Шкафы Образцов', 3: '' });
+  eq('override: merge the similar one by choice', [p2.items[2].action, p2.items[2].target, p2.items[2].name, p2.items[2].similar.length], ['merge', 'Шкафы Образцов', 'Шкафы Образцов', 0]);
+  eq('override: empty means create a new card', p2.items[3].action, 'new');
+  // внесение
+  const ap = KC.dashApply(p2, meta0, {}, N), P = ap.projects;
+  eq('apply: new card on the mapped stage with fields and history', [P['Прихожая Пустая'].stage, P['Прихожая Пустая'].status, P['Прихожая Пустая'].hist[0].t], [5, 'work', 'Создана из дашборда заказов']);
+  eq('apply: «Сдано» from dashboard is stage 18, project stays open', [P['Шкафы Образцов'].stage, P['Шкафы Образцов'].status], [18, 'work']);
+  eq('apply: dates written to CRM fields', [P['Шкафы Образцов'].f.start, P['Шкафы Образцов'].f.workDays, P['Шкафы Образцов'].f.due], ['2026-08-01', '5', '2026-08-07']);
+  eq('apply: due that differs from the work-day count is reported and recomputed', byName(p2, 'Шкаф Образцов').notes.some(n => n.indexOf('отличается от расчёта') >= 0), true);
+  eq('apply: card kept its stage and dates', [P['Санузел тестовый'].stage, P['Санузел тестовый'].f.start, P['Санузел тестовый'].f.due], [8, '2026-09-02', '2026-10-01']);
+  eq('apply: project from operations got a card (dashboard stage 5 is our 9)', [P['КУХНЯ ТЕСТОВА'].stage, P['КУХНЯ ТЕСТОВА'].f.start], [9, '2026-10-05']);
+  const T = Object.values(ap.tasks);
+  eq('apply: tasks created and linked', [T.length, T.every(t => t.ownerType === 'project' && P[t.ownerKey])], [3, true]);
+  eq('apply: done task without fact date, zones mapped', [T.find(t => t.title === 'Замер').status, T.find(t => t.title === 'Замер').doneAt, T.find(t => t.title === 'Замер').zone, T.find(t => t.title === 'Монтаж').zone, T.find(t => t.title === 'Заказ').zone], ['done', '', 'office', 'contractors', 'none']);
+  const p3 = KC.dashPlan(dash, ap.projects, recs, ap.tasks, { 2: 'Шкафы Образцов', 3: '' });
+  const ap3 = KC.dashApply(p3, ap.projects, ap.tasks, N);
+  eq('repeat import: tasks are not duplicated', [p3.totals.tasksNew, p3.totals.tasksSkip, Object.keys(ap3.tasks).length], [0, 3, 3]);
+  // повтор без выбора вручную: карточки находятся по метке источника, ваша раскладка не трогается
+  const moved = Object.assign({}, ap.projects); moved['Шкафы Образцов'] = Object.assign({}, moved['Шкафы Образцов'], { stage: 12 }); moved['КУХНЯ ТЕСТОВА'] = Object.assign({}, moved['КУХНЯ ТЕСТОВА'], { stage: 7, f: Object.assign({}, moved['КУХНЯ ТЕСТОВА'].f, { due: '2026-12-31' }) });
+  const p4 = KC.dashPlan(dash, moved, recs, ap.tasks);
+  const ap4 = KC.dashApply(p4, moved, ap.tasks, N);
+  eq('repeat without choices: all cards found by source mark, no new cards', [p4.totals.merge, p4.totals.create, Object.keys(ap4.projects).length], [5, 0, Object.keys(ap.projects).length]);
+  eq('repeat: stage and dates set by you are not touched', [ap4.projects['Шкафы Образцов'].stage, ap4.projects['КУХНЯ ТЕСТОВА'].stage, ap4.projects['КУХНЯ ТЕСТОВА'].f.due], [12, 7, '2026-12-31']);
+  eq('repeat: no extra history lines', ap4.projects['КУХНЯ ТЕСТОВА'].hist.length, ap.projects['КУХНЯ ТЕСТОВА'].hist.length);
+}
 console.log(pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

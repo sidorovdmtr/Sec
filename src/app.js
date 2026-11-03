@@ -76,7 +76,7 @@
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
     records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, leads: {}, tasks: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    admin: false, projMode: 'board', doneAll: false, leadMode: 'funnel', leadQuery: '', lcard: null, tcard: null, taskZone: 'all', taskMode: 'board', taskQuery: '', artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    admin: false, projMode: 'board', doneAll: false, leadMode: 'funnel', leadQuery: '', lcard: null, tcard: null, dimp: null, taskZone: 'all', taskMode: 'board', taskQuery: '', artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -455,6 +455,7 @@
     out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Резервная копия</div><div class="small mu">' + (S.meta.lastBackupAt ? 'Последняя копия: ' + esc(ruDate(S.meta.lastBackupAt)) + '.' : 'Копия ещё не делалась.') + ' JSON нужен для восстановления, xlsx только для просмотра. На iPhone JSON откроется в меню «Поделиться»: выберите «Сохранить в Файлы». Раз в неделю копию нужно сохранять на Google Диск: автоматически этот шаг пока не работает, нужен серверный планировщик.</div><button type="button" class="btn main" data-act="backup">Скачать копию для восстановления (JSON)</button><button type="button" class="btn" data-act="backupxlsx">Скачать таблицу для просмотра (xlsx)</button>' +
       (S.admin ? '<label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Восстановить из копии (JSON)<input type="file" accept=".json,application/json" id="restorefile" hidden></label>' : '') + '</div>';
     if (S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Импорт сводной таблицы</div><div class="small mu">Таблица с колонками Финолога (xlsx). Ниже можно указать, сколько первых строк загрузить: для проверки хватит 5.</div><input id="importlimit" class="input" type="text" inputmode="numeric" placeholder="Сколько строк загрузить (пусто = все)"><label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Выбрать файл xlsx<input type="file" accept=".xlsx,.xls" id="summaryfile" hidden></label></div>';
+    if (S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Перенос из дашборда заказов</div><div class="small mu">Файл выгрузки дашборда (JSON). Сначала откроется окно с цифрами: что склеено с вашими карточками, что новое. Данные вносятся только после подтверждения. Повторный перенос не создаёт дублей. Перед внесением сделайте копию JSON.</div><label class="btn" style="display:flex;align-items:center;justify-content:center;cursor:pointer">Выбрать файл дашборда (JSON)<input type="file" accept=".json,application/json" id="dashfile" hidden></label></div>';
     if (S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Исправление дат импорта</div><div class="small mu">Если сводная таблица была загружена до 02.11.2026, её даты могли сдвинуться на день назад (например, 30 октября записано как 29 октября). Кнопка покажет, сколько записей затронуто, и спросит подтверждение. Остатки не меняются. Сначала сделайте копию.</div><button type="button" class="btn" data-act="datefix">Исправить даты импорта</button></div>';
     if (S.mode === 'test' && S.admin) out += '<div class="glass" style="padding:14px;display:flex;flex-direction:column;gap:8px"><div class="bold">Тестовая база</div><div class="small mu">Выдуманные данные для проверки. Сброс удаляет всю тестовую базу целиком, рабочая база не затрагивается.</div><button type="button" class="btn" data-act="seed">Добавить тестовые данные</button><button type="button" class="btn danger" data-act="resetTest">Сбросить тестовую базу</button></div>';
     var log = S.log.slice(-30).reverse();
@@ -1517,6 +1518,48 @@
     render();
   }
 
+  /* ---------- разовый перенос из дашборда заказов ---------- */
+  function dimpPlan() { var d = S.dimp; return KC.dashPlan(d.data, S.meta.projects, S.records, S.meta.tasks, d.over); }
+  function renderDImp() {
+    var d = S.dimp, host = $('#dimp');
+    if (!d) { if (host) host.remove(); return; }
+    if (!host) { host = document.createElement('div'); host.id = 'dimp'; document.body.appendChild(host); }
+    var plan = dimpPlan(), t = plan.totals, g = function (x) { return '<div class="glass" style="padding:12px 14px;display:flex;flex-direction:column;gap:4px">' + x + '</div>'; };
+    var sum = g('<div class="bold">Итог сверки</div>' +
+      frow('Проектов в файле', t.projects, '', false) + frow('Склеено с вашими названиями', t.merge, '', false) + frow('Новых карточек', t.create, '', false) +
+      frow('Задач новых (выполнено / открыто)', t.tasksNew + ' (' + t.done + ' / ' + t.open + ')', '', false) + (t.tasksSkip ? frow('Задач уже было внесено ранее', t.tasksSkip, '', false) : '') +
+      frow('Проектов без дат', t.noDates, '', false) + frow('Проектов с замечаниями', t.withNotes, t.withNotes ? 'neg' : '', false));
+    var rows = plan.items.map(function (it) {
+      var label = it.action === 'merge' ? '<span class="pill">склеен с «' + esc(it.target) + '»' + (it.again ? ', перенесён ранее' : it.hasCard ? '' : ', карточки не было') + '</span>' : '<span class="pill warn">новая карточка</span>';
+      var dates = [it.f.start ? 'начало ' + ruDate(it.f.start) : '', it.f.workDays ? it.f.workDays + ' раб. дн.' : '', it.f.due ? 'сдача ' + ruDate(it.f.due) : ''].filter(Boolean).join(', ');
+      var opts = it.action === 'merge' ? (d.over.hasOwnProperty(it.i) ? [it.target] : []) : it.similar;
+      var sel = opts.length ? '<label class="cflabel"><span>' + (it.action === 'merge' ? 'Решение' : 'Похоже на существующие, проверьте') + '</span><select class="input" id="dimp-sel-' + it.i + '"><option value="">Создать новую карточку</option>' + opts.map(function (n) { return '<option value="' + esc(n) + '"' + (it.target === n ? ' selected' : '') + '>Склеить с «' + esc(n) + '»</option>'; }).join('') + '</select></label>' : '';
+      return g('<div class="row between wrap gap8"><div class="bold">' + esc(it.name) + '</div>' + label + '</div><div class="small mu">Стадия: ' + esc(KC.crmStageInfo(it.stage).name) + (dates ? ' · ' + esc(dates) : ' · дат нет') + ' · задач: ' + it.tasks.length + '</div>' + it.notes.map(function (n) { return '<div class="small neg">' + esc(n) + '</div>'; }).join('') + sel);
+    }).join('');
+    var prev = host.querySelector('.sheet'), top = prev ? prev.scrollTop : 0;
+    host.innerHTML = '<div class="sheet" style="z-index:70"><div class="inner"><div class="row between"><button type="button" class="iconbtn" data-act="dimp-cancel" aria-label="Закрыть">' + svg('close', 22) + '</button><div class="bold" style="font-size:17px;text-align:center">Перенос из дашборда</div><span></span></div>' +
+      '<div class="banner warn">Перед внесением сделайте копию JSON. Данные пока не внесены.</div>' + sum + '<div class="row gap8 wrap"><button type="button" class="btn main" data-act="dimp-do">Внести</button><button type="button" class="btn" data-act="dimp-cancel">Отмена</button></div>' + rows + '</div></div>';
+    if (prev) host.querySelector('.sheet').scrollTop = top;
+  }
+  function openDImp(file) {
+    var fr = new FileReader();
+    fr.onload = function () {
+      var data = jparse(fr.result, null), list = KC.dashList ? KC.dashList(data) : [];
+      if (!list.length) return toast('В файле нет проектов дашборда');
+      S.dimp = { data: data, over: {} }; renderDImp();
+    };
+    fr.readAsText(file);
+  }
+  function dimpAction(a) {
+    if (a === 'dimp-cancel') { S.dimp = null; return renderDImp(); }
+    if (a === 'dimp-do') {
+      var plan = dimpPlan(), res = KC.dashApply(plan, S.meta.projects, S.meta.tasks, KC.nowISO()), t = plan.totals;
+      S.meta.projects = res.projects; S.meta.tasks = res.tasks;
+      addLog('import', 'Перенос из дашборда заказов: проектов ' + t.projects + ' (склеено ' + t.merge + ', новых ' + t.create + '), задач ' + t.tasksNew, '');
+      persist(); S.dimp = null; renderDImp(); render(); toast('Перенесено: проектов ' + t.projects + ', задач ' + t.tasksNew);
+    }
+  }
+
   /* ---------- общий рендер и события ---------- */
   var NAV = [['ops', 'Операции', 'ops'], ['projects', 'Проекты', 'proj'], ['leads', 'Лиды', 'lead'], ['tasks', 'Задачи', 'task'], ['settings', 'Настройки', 'gear']];
   function render() {
@@ -1531,6 +1574,7 @@
     if (S.pcard) renderPCard();
     if (S.lcard) renderLCard();
     if (S.tcard) renderTCard();
+    if (S.dimp) renderDImp();
   }
   function refreshOpsParts() {
     var l = $('#list'); if (l) l.innerHTML = listHtml();
@@ -1544,6 +1588,7 @@
     if (a.indexOf('pc-') === 0) { e.preventDefault(); return pcAction(a, t); }
     if (a.indexOf('ld-') === 0) { e.preventDefault(); return ldAction(a, t); }
     if (a.indexOf('tk-') === 0) { e.preventDefault(); return tkAction(a, t); }
+    if (a.indexOf('dimp-') === 0) { e.preventDefault(); return dimpAction(a); }
     if (a.indexOf('art-') === 0) { e.preventDefault(); if (a === 'art-open') return openArtSheet(t.getAttribute('data-id')); return artAction(a, t); }
     if (a === 'closeform') return closeForm();
     if (a === 'saveform') return saveForm();
@@ -1613,6 +1658,8 @@
   }
   function onChange(e) {
     var t = e.target;
+    if (t.id === 'dashfile') { var f4 = t.files[0]; t.value = ''; if (f4) openDImp(f4); return; }
+    if (t.id && t.id.indexOf('dimp-sel-') === 0 && S.dimp) { S.dimp.over[+t.id.slice(9)] = t.value; return renderDImp(); }
     if (t.id === 'tf-owner') return tkOwnerChange(t);
     if (t.id && t.id.indexOf('tf-') === 0 && S.tcard) return tkInput(t.id.slice(3), t);
     if (t.getAttribute && t.getAttribute('data-stm')) { var f = t.files[0]; t.value = ''; if (f) openStatementFile(t.getAttribute('data-stm'), f); return; }

@@ -614,6 +614,86 @@
     if ((o.status || 'open') === 'done') items.sort(function (a, b) { return a.doneAt < b.doneAt ? 1 : -1; }); else items.sort(taskCmp);
     return { items: items, zoneCounts: zoneCounts, openCount: openCount, doneCount: doneCount };
   }
+  /* ---------- Перенос из дашборда заказов (разовый): сверка названий, карточки, задачи ---------- */
+  // стадии дашборда 1–11 идут подряд после нашей 4-й (5–15), 12 «Сдано» это наша 18; всё остальное — первая стадия
+  var DASH_ZONES = { unassigned: 'none', workshop: 'shop', office: 'office', contractors: 'contractors' };
+  function dashStage(n) { n = Number(n); if (n >= 1 && n <= 11 && n === Math.floor(n)) return n + 4; if (n === 12) return CRM.DONE; return CRM.FIRST; }
+  function dashZone(z) { return DASH_ZONES[z] || TASKS.DEFAULT_ZONE; }
+  function dashTokens(name) { return projNorm(name).split(' ').filter(function (t) { return t.length >= 6; }); }
+  // кандидаты «возможно, тот же проект»: общее значимое слово (6+ букв), точное совпадение названия сюда не входит
+  function dashSimilar(name, existingNames) {
+    var tk = dashTokens(name), n = projNorm(name), out = [];
+    existingNames.forEach(function (e) {
+      if (projNorm(e) === n) return;
+      var et = dashTokens(e), shared = tk.filter(function (t) { return et.indexOf(t) >= 0; }).length;
+      if (shared) out.push({ name: e, shared: shared });
+    });
+    out.sort(function (a, b) { return b.shared - a.shared || a.name.localeCompare(b.name, 'ru'); });
+    return out.slice(0, 6).map(function (x) { return x.name; });
+  }
+  function dashList(dash) { return (Array.isArray(dash) ? dash : (dash && dash.projects) || []).filter(function (p) { return p && String(p.name || '').replace(/\s+/g, ' ').trim(); }); }
+  // overrides[i]: undefined — решать автоматически, '' — создать новую карточку, иначе — склеить с карточкой/проектом с этим названием
+  function dashPlan(dash, projectsMeta, records, tasksMeta, overrides) {
+    overrides = overrides || {}; projectsMeta = projectsMeta || {}; tasksMeta = tasksMeta || {};
+    var list = dashList(dash), exist = {}, claimed = {}, byDashId = {}, items = new Array(list.length), order = list.map(function (p, i) { return i; });
+    Object.keys(projectsMeta).forEach(function (k) { if (k) exist[k] = 1; });
+    (records || []).forEach(function (r) { if (r.project && !r.deleted) exist[r.project] = 1; });
+    Object.keys(projectsMeta).forEach(function (k) { var m = projectsMeta[k]; if (m && m.dashId) byDashId[m.dashId] = k; });
+    var existNames = Object.keys(exist);
+    // раньше начатый проект получает имя первым; пустая дата начала идёт в конец
+    order.sort(function (a, b) { var sa = list[a].startDate || '', sb = list[b].startDate || ''; if (!sa !== !sb) return sa ? -1 : 1; return sa < sb ? -1 : sa > sb ? 1 : a - b; });
+    function freeName(base) { var n = 2, nm = base + ' (' + n + ')'; while (claimed[projNorm(nm)] || exist[nm] || projectsMeta[nm]) { n++; nm = base + ' (' + n + ')'; } return nm; }
+    order.forEach(function (i) {
+      var p = list[i], src = String(p.name).replace(/\s+/g, ' ').trim(), notes = [], target = '', matched;
+      if (Object.prototype.hasOwnProperty.call(overrides, i) && overrides[i] !== undefined) matched = overrides[i] || null; else if (p._id && byDashId[p._id]) matched = byDashId[p._id]; else matched = findProjectName(records, projectsMeta, src);
+      var finalName = src;
+      if (matched && claimed[projNorm(matched)]) { notes.push('Название повторяется в дашборде: карточка создана отдельно'); finalName = freeName(src); matched = null; }
+      else if (!matched && claimed[projNorm(src)]) { notes.push('Название повторяется в дашборде: добавлено «(2)»'); finalName = freeName(src); }
+      if (matched) { target = matched; finalName = matched; }
+      claimed[projNorm(finalName)] = 1;
+      var pm = target ? projectsMeta[target] : null, f = {}, again = !!(pm && p._id && pm.dashId === p._id);
+      if (p.startDate) f.start = p.startDate; if (p.workDays) f.workDays = String(p.workDays); if (p.dueDate) f.due = p.dueDate;
+      var auto = f.start && f.workDays ? addWorkDays(f.start, parseInt(f.workDays, 10)) : null;
+      if (auto) { if (f.due && f.due !== auto) notes.push('Дата сдачи в дашборде отличается от расчёта по рабочим дням, взят расчёт'); f.due = auto; }
+      var stage = dashStage(p.stage), keepStage = false;
+      if (again) { keepStage = true; f = {}; }
+      else if (pm && (pm.status === 'done' || (pm.stage && pm.stage !== CRM.FIRST))) { keepStage = true; if (crmStage(pm) !== stage) notes.push('Стадия в карточке («' + crmStageInfo(crmStage(pm)).name + '») осталась вашей'); }
+      var keptF = [];
+      if (pm && !again) Object.keys(f).slice().forEach(function (k) { var cur = crmField(pm, k); if (cur) { if (cur !== f[k]) keptF.push(crmFieldLabel(k)); delete f[k]; } });
+      if (keptF.length) notes.push('Оставлены ваши значения: ' + keptF.join(', '));
+      var tasks = (p.tasks || []).filter(function (t) { return t && String(t.text || '').trim(); }).map(function (t, ti) {
+        var id = 'dash-' + (p._id || 'i' + i) + '-' + (t.id || ti);
+        return { id: id, text: String(t.text).trim(), done: !!t.done, zone: dashZone(t.zone), exists: !!tasksMeta[id] };
+      });
+      var sim = target ? [] : dashSimilar(src, existNames);
+      items[i] = { i: i, srcName: src, name: finalName, target: target, action: target ? 'merge' : 'new', hasCard: !!pm, again: again, dashId: p._id || '', stage: stage, keepStage: keepStage, f: f, tasks: tasks, notes: notes, similar: sim, noDates: !p.startDate && !p.dueDate };
+    });
+    var t = { projects: items.length, merge: 0, create: 0, tasks: 0, tasksNew: 0, tasksSkip: 0, done: 0, open: 0, noDates: 0, withNotes: 0 };
+    items.forEach(function (x) { if (x.action === 'merge') t.merge++; else t.create++; if (x.noDates) t.noDates++; if (x.notes.length) t.withNotes++; x.tasks.forEach(function (k) { t.tasks++; if (k.exists) t.tasksSkip++; else { t.tasksNew++; if (k.done) t.done++; else t.open++; } }); });
+    return { items: items, totals: t };
+  }
+  function dashApply(plan, projectsMeta, tasksMeta, now) {
+    var projects = Object.assign({}, projectsMeta), tasks = Object.assign({}, tasksMeta);
+    plan.items.forEach(function (it) {
+      var key = it.name, pm = projects[key], o, stName = crmStageInfo(it.stage).name;
+      if (!pm) { o = crmNewCard(now, 'Создана из дашборда заказов'); o.stage = it.stage; o.f = Object.assign({}, it.f); o.updatedAt = now; }
+      else if (it.again) { o = pm; }
+      else {
+        o = Object.assign({}, pm); o.f = Object.assign({}, pm.f, it.f); if (!it.keepStage) o.stage = it.stage;
+        o.hist = [{ at: now, t: 'Склеено с дашбордом заказов' + (it.keepStage ? '' : ': стадия «' + stName + '»') }].concat(o.hist || []).slice(0, 60); o.updatedAt = now;
+      }
+      if (it.dashId) o.dashId = it.dashId;
+      projects[key] = o;
+      it.tasks.forEach(function (k) {
+        if (tasks[k.id]) return;
+        var t = newTask(k.text, { zone: k.zone, ownerType: 'project', ownerKey: key }, now);
+        t.id = k.id; t.hist = [{ at: now, t: 'Перенесена из дашборда заказов' }];
+        if (k.done) { t.status = 'done'; t.doneAt = ''; }
+        tasks[k.id] = t;
+      });
+    });
+    return { projects: projects, tasks: tasks };
+  }
   function renameArticlePatches(records, oldName, newName) {
     var o = lc(oldName), out = [];
     records.forEach(function (r) { if (r.article && lc(r.article) === o && r.article !== newName) out.push({ id: r.id, patch: { article: newName } }); });
@@ -1049,7 +1129,7 @@
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, TASKS: TASKS, taskZone: taskZone, nowLocal: nowLocal, newTask: newTask, taskSet: taskSet, taskSetOwner: taskSetOwner, taskMoveZone: taskMoveZone, taskDone: taskDone, taskReopen: taskReopen, taskAlarm: taskAlarm, taskLate: taskLate, mergeTasks: mergeTasks, tasksToList: tasksToList, tasksFromList: tasksFromList, taskOwnerName: taskOwnerName, tasksFor: tasksFor, tasksBoard: tasksBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, TASKS: TASKS, taskZone: taskZone, nowLocal: nowLocal, newTask: newTask, taskSet: taskSet, taskSetOwner: taskSetOwner, taskMoveZone: taskMoveZone, taskDone: taskDone, taskReopen: taskReopen, taskAlarm: taskAlarm, taskLate: taskLate, mergeTasks: mergeTasks, tasksToList: tasksToList, tasksFromList: tasksFromList, taskOwnerName: taskOwnerName, tasksFor: tasksFor, tasksBoard: tasksBoard, dashList: dashList, dashStage: dashStage, dashZone: dashZone, dashSimilar: dashSimilar, dashPlan: dashPlan, dashApply: dashApply, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };
