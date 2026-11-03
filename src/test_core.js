@@ -664,7 +664,8 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
 // задачи: зоны, значения по умолчанию, будильник, срок и фактическая дата закрытия, слияние, привязка к карточкам
 {
   const N1 = '2026-11-03T09:00:00.000Z', N2 = '2026-11-03T10:00:00.000Z';
-  eq('zones: four fixed zones', KC.TASKS.ZONES.map(z => z.name), ['Не распределены', 'Цех', 'Офис', 'Директор']);
+  eq('zones: five fixed zones', KC.TASKS.ZONES.map(z => z.name), ['Не распределены', 'Цех', 'Офис', 'Директор', 'Подрядчики']);
+  eq('zones: contractors zone is valid for a task', KC.newTask('x', { zone: 'contractors' }, N1).zone, 'contractors');
   const a = KC.newTask('Заказать фурнитуру', { ownerType: 'project', ownerKey: 'Кухня Иванова' }, N1);
   eq('task: zone defaults to «Не распределены»', [a.zone, KC.taskZone(a.zone).name], ['none', 'Не распределены']);
   eq('task: starts open without close date', [a.status, a.doneAt, a.due, a.remind, a.desc, a.comment], ['open', '', '', '', '', '']);
@@ -706,7 +707,7 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('tasksFor: lead card gets its own task', KC.tasksFor(tasks, 'lead', lead.id, o).list.map(t => t.title), ['Позвонить']);
   eq('tasksFor: other project is empty', KC.tasksFor(tasks, 'project', 'Другой', o).list.length, 0);
   const bd = KC.tasksBoard(tasks, Object.assign({ zone: 'all', status: 'open' }, o));
-  eq('board: open count and zone counters', [bd.openCount, bd.doneCount, bd.zoneCounts.all, bd.zoneCounts.none, bd.zoneCounts.shop, bd.zoneCounts.office, bd.zoneCounts.director], [4, 1, 4, 2, 0, 1, 1]);
+  eq('board: open count and zone counters', [bd.openCount, bd.doneCount, bd.zoneCounts.all, bd.zoneCounts.none, bd.zoneCounts.shop, bd.zoneCounts.office, bd.zoneCounts.director, bd.zoneCounts.contractors], [4, 1, 4, 2, 0, 1, 1, 0]);
   eq('board: sorted by due, no due last', bd.items.map(t => t.title), ['Сверить смету', 'Позвонить', 'Заказать фурнитуру', 'Без карточки']);
   eq('board: lead owner name resolved', bd.items.find(t => t.title === 'Позвонить').owner, 'Заявка Петрова');
   eq('board: zone filter', KC.tasksBoard(tasks, Object.assign({ zone: 'director', status: 'open' }, o)).items.map(t => t.title), ['Без карточки']);

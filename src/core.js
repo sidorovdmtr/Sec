@@ -539,7 +539,7 @@
   }
   /* ---------- CRM: задачи. Данные: meta.tasks[id]; задача привязана к карточке проекта (key = название) или лида (key = id) ---------- */
   var TASKS = {
-    ZONES: [{ id: 'none', name: 'Не распределены' }, { id: 'shop', name: 'Цех' }, { id: 'office', name: 'Офис' }, { id: 'director', name: 'Директор' }],
+    ZONES: [{ id: 'none', name: 'Не распределены' }, { id: 'shop', name: 'Цех' }, { id: 'office', name: 'Офис' }, { id: 'director', name: 'Директор' }, { id: 'contractors', name: 'Подрядчики' }],
     DEFAULT_ZONE: 'none'
   };
   function taskZone(id) { for (var i = 0; i < TASKS.ZONES.length; i++) if (TASKS.ZONES[i].id === id) return TASKS.ZONES[i]; return TASKS.ZONES[0]; }

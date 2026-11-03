@@ -1,4 +1,4 @@
-// CRM: вкладка «Задачи» (4 зоны, будильник, срок, комментарий) и привязка задач к карточкам проектов и лидов. Сеть заблокирована, облако не используется.
+// CRM: вкладка «Задачи» (5 зон, будильник, срок, комментарий) и привязка задач к карточкам проектов и лидов. Сеть заблокирована, облако не используется.
 const { chromium } = require('playwright');
 const path = require('path');
 const FILE = 'file://' + path.resolve(process.argv[2] || 'dist/deploy/index.html');
@@ -36,13 +36,13 @@ async function newTask(page, o) {
     ok(L('new tab «Задачи» sits between Лиды and Настройки'), navs.join('|') === 'Операции|Проекты|Лиды|Задачи|Настройки', navs);
     ok(L('five nav buttons fit the screen'), await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1 && [...document.querySelectorAll('.nav button')].every(b => b.getBoundingClientRect().width >= 56)));
     await page.click('.nav button[data-v="tasks"]');
-    ok(L('tab opens with title and empty board'), (await page.locator('.h2').first().innerText()).trim() === 'Задачи' && (await page.locator('.kst[data-tzone] .kempty').count()) === 4);
+    ok(L('tab opens with title and empty board'), (await page.locator('.h2').first().innerText()).trim() === 'Задачи' && (await page.locator('.kst[data-tzone] .kempty').count()) === 5);
     const cols0 = (await page.locator('.kcol .kch b').allInnerTexts()).map(x => x.trim());
-    ok(L('board has four zone columns'), cols0.join('|') === 'Не распределены|Цех|Офис|Директор', cols0);
+    ok(L('board has five zone columns'), cols0.join('|') === 'Не распределены|Цех|Офис|Директор|Подрядчики', cols0);
     ok(L('board is the default view, zone chips only in the list'), (await page.locator('button[data-act="tk-zone"]').count()) === 0 && (await has('button[data-act="tk-mode"][data-v="board"].on')));
     await page.click('button[data-act="tk-mode"][data-v="list"]');
     const zchips = (await page.locator('button[data-act="tk-zone"]').allInnerTexts()).map(x => x.trim());
-    ok(L('zone filter has all + four zones'), zchips.join('|') === 'Все · 0|Не распределены · 0|Цех · 0|Офис · 0|Директор · 0', zchips);
+    ok(L('zone filter has all + five zones'), zchips.join('|') === 'Все · 0|Не распределены · 0|Цех · 0|Офис · 0|Директор · 0|Подрядчики · 0', zchips);
     ok(L('one theme button'), (await page.locator('button[data-act="theme"]').count()) === 1);
 
     // карточки для привязки
@@ -94,7 +94,7 @@ async function newTask(page, o) {
     ok(L('search keeps focus while typing'), await page.evaluate(() => document.activeElement && document.activeElement.id === 'tq'));
     await page.fill('#tq', '');
 
-    // доска: четыре зоны, карточки по зонам, выполненные не показываются
+    // доска: пять зон, карточки по зонам, выполненные не показываются
     await page.click('button[data-act="tk-mode"][data-v="board"]');
     const inCol = (zone, title) => page.locator('.kst[data-tzone="' + zone + '"] .kcard:has-text("' + title + '")').count();
     ok(L('board puts tasks in their zones'), (await inCol('office', 'Заказать фурнитуру')) === 1 && (await inCol('director', 'Проверить смету')) === 1 && (await inCol('none', 'Позвонить в банк')) === 1 && (await inCol('director', 'Позвонить в банк')) === 0, 'board');
