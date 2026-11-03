@@ -36,7 +36,11 @@ async function newTask(page, o) {
     ok(L('new tab «Задачи» sits between Лиды and Настройки'), navs.join('|') === 'Операции|Проекты|Лиды|Задачи|Настройки', navs);
     ok(L('five nav buttons fit the screen'), await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1 && [...document.querySelectorAll('.nav button')].every(b => b.getBoundingClientRect().width >= 56)));
     await page.click('.nav button[data-v="tasks"]');
-    ok(L('tab opens with title and empty state'), (await page.locator('.h2').first().innerText()).trim() === 'Задачи' && (await has('text=Открытых задач нет')));
+    ok(L('tab opens with title and empty board'), (await page.locator('.h2').first().innerText()).trim() === 'Задачи' && (await page.locator('.kst[data-tzone] .kempty').count()) === 4);
+    const cols0 = (await page.locator('.kcol .kch b').allInnerTexts()).map(x => x.trim());
+    ok(L('board has four zone columns'), cols0.join('|') === 'Не распределены|Цех|Офис|Директор', cols0);
+    ok(L('board is the default view, zone chips only in the list'), (await page.locator('button[data-act="tk-zone"]').count()) === 0 && (await has('button[data-act="tk-mode"][data-v="board"].on')));
+    await page.click('button[data-act="tk-mode"][data-v="list"]');
     const zchips = (await page.locator('button[data-act="tk-zone"]').allInnerTexts()).map(x => x.trim());
     ok(L('zone filter has all + four zones'), zchips.join('|') === 'Все · 0|Не распределены · 0|Цех · 0|Офис · 0|Директор · 0', zchips);
     ok(L('one theme button'), (await page.locator('button[data-act="theme"]').count()) === 1);
@@ -81,7 +85,7 @@ async function newTask(page, o) {
 
     // фильтр по зоне и поиск
     await page.click('button[data-act="tk-zone"][data-v="shop"]');
-    ok(L('empty zone shows empty state'), (await has('text=Открытых задач нет')));
+    ok(L('empty zone in the list shows empty state'), (await has('text=Открытых задач нет')));
     await page.click('button[data-act="tk-zone"][data-v="director"]');
     ok(L('zone filter «Директор»'), (await page.locator('#tasklist .tkrow').count()) === 1 && (await has('#tasklist .tkrow:has-text("Проверить смету")')));
     await page.click('button[data-act="tk-zone"][data-v="all"]');
@@ -89,6 +93,33 @@ async function newTask(page, o) {
     ok(L('search by card name'), (await page.locator('#tasklist .tkrow').count()) === 2);
     ok(L('search keeps focus while typing'), await page.evaluate(() => document.activeElement && document.activeElement.id === 'tq'));
     await page.fill('#tq', '');
+
+    // доска: четыре зоны, карточки по зонам, выполненные не показываются
+    await page.click('button[data-act="tk-mode"][data-v="board"]');
+    const inCol = (zone, title) => page.locator('.kst[data-tzone="' + zone + '"] .kcard:has-text("' + title + '")').count();
+    ok(L('board puts tasks in their zones'), (await inCol('office', 'Заказать фурнитуру')) === 1 && (await inCol('director', 'Проверить смету')) === 1 && (await inCol('none', 'Позвонить в банк')) === 1 && (await inCol('director', 'Позвонить в банк')) === 0, 'board');
+    ok(L('board tile shows the card name and the alarm'), (await has('.kst[data-tzone="office"] .kcard:has-text("Кухня Иванова") .tkalarm')) && !(await has('.kst[data-tzone="director"] .kcard:has-text("Проверить смету") .tkalarm')));
+    ok(L('board tile marks overdue'), await has('.kst[data-tzone="director"] .kcard:has-text("Проверить смету"):has-text("просрочена")'));
+    ok(L('column counters'), (await page.locator('.kcol:has(.kst[data-tzone="director"]) .kch .pill').innerText()).trim() === '1');
+    ok(L('board does not push the page sideways'), await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+    if (label === 'desktop') {
+      ok(L('tiles are draggable on desktop'), (await page.locator('.kcard[data-task][draggable="true"]').count()) >= 3);
+      await page.locator('.kcard[data-task]:has-text("Заказать фурнитуру")').dragTo(page.locator('.kst[data-tzone="shop"]'));
+      t = await taskBy(page, 'Заказать фурнитуру');
+      ok(L('drag moves the task to another zone'), t.zone === 'shop' && (await inCol('shop', 'Заказать фурнитуру')) === 1 && (await inCol('office', 'Заказать фурнитуру')) === 0, t.zone);
+      ok(L('zone move is written to the task history'), t.hist[0].t === 'Зона: Офис → Цех', t.hist[0]);
+      await page.locator('.kcard[data-task]:has-text("Заказать фурнитуру")').dragTo(page.locator('.kst[data-tzone="office"]'));
+      ok(L('drag back to the office'), (await taskBy(page, 'Заказать фурнитуру')).zone === 'office');
+    } else {
+      ok(L('no dragging on the phone'), (await page.locator('.kcard[data-task][draggable="true"]').count()) === 0);
+      await page.click('.kcard[data-task]:has-text("Заказать фурнитуру")'); await page.selectOption('#tf-zone', 'shop'); await page.click('#tcard button[data-act="tk-close"]');
+      ok(L('zone changed in the task moves the tile'), (await inCol('shop', 'Заказать фурнитуру')) === 1 && (await inCol('office', 'Заказать фурнитуру')) === 0);
+      await page.click('.kcard[data-task]:has-text("Заказать фурнитуру")'); await page.selectOption('#tf-zone', 'office'); await page.click('#tcard button[data-act="tk-close"]');
+    }
+    await page.click('.kcard[data-task]:has-text("Проверить смету")');
+    ok(L('tile click opens the task'), (await has('#tcard #tf-title')) && (await page.inputValue('#tf-title')) === 'Проверить смету');
+    await page.click('#tcard button[data-act="tk-close"]');
+    await page.click('button[data-act="tk-mode"][data-v="list"]');
 
     // блок «Задачи» в карточке проекта
     await page.click('.nav button[data-v="projects"]');
@@ -131,16 +162,24 @@ async function newTask(page, o) {
     ok(L('done task shows «Выполнена» in the sheet'), (await has('#tcard :text("Выполнена")')) && (await has('#tcard button[data-act="tk-reopen"]')));
     await page.click('#tcard button[data-act="tk-close"]');
     ok(L('done task left the open list'), !(await has('#tasklist .tkrow:has-text("Позвонить в банк")')));
-    await page.click('button[data-act="tk-status"][data-v="done"]');
+    await page.click('button[data-act="tk-mode"][data-v="done"]');
     ok(L('done tab shows it with fact date'), (await has('#tasklist .tkrow.tkdone:has-text("Позвонить в банк"):has-text("выполнена")')));
     await page.click('#tasklist .tkrow:has-text("Позвонить в банк")'); await page.click('button[data-act="tk-reopen"]');
     t = await taskBy(page, 'Позвонить в банк');
     ok(L('reopen clears fact date'), t.status === 'open' && t.doneAt === '', t);
-    await page.click('#tcard button[data-act="tk-close"]'); await page.click('button[data-act="tk-status"][data-v="open"]');
+    await page.click('#tcard button[data-act="tk-close"]'); await page.click('button[data-act="tk-mode"][data-v="list"]');
     // закрытая задача не звенит
     await page.click('#tasklist .tkrow:has-text("Заказать фурнитуру")'); await page.click('button[data-act="tk-done"]');
     ok(L('done task has no alarm'), (await page.locator('#tcard .tkalarm').count()) === 0);
     await page.click('#tcard button[data-act="tk-close"]');
+
+    // выполненные уходят с доски, но остаются в карточке проекта с пометой «выполнена»
+    await page.click('button[data-act="tk-mode"][data-v="board"]');
+    ok(L('done task left the board'), (await page.locator('.kcard[data-task]:has-text("Заказать фурнитуру")').count()) === 0 && (await page.locator('.kcard[data-task]').count()) === 4);
+    await page.click('.nav button[data-v="projects"]'); await page.locator('.kcard[data-key="Кухня Иванова"]').click();
+    ok(L('done task stays in the project card with the «выполнена» mark'), (await has('#pcard #tkblock .tkrow.tkdone:has-text("Заказать фурнитуру"):has-text("выполнена")')) && (await has('#pcard #tkblock:has-text("открытых")')));
+    ok(L('open tasks come first, done last in the card'), (await page.locator('#pcard #tkblock .tkrow').last().innerText()).indexOf('Заказать фурнитуру') >= 0);
+    await page.click('#pcard button[data-act="pc-close"]');
 
     // копия и сохранение после перезагрузки
     const bk = await page.evaluate(() => JSON.parse(JSON.stringify(KC.backupObject({ records: KCApp.S.records, log: KCApp.S.log, decisions: KCApp.S.decisions, meta: { ignoredKeys: [], statements: [], projects: KCApp.S.meta.projects, leads: KCApp.S.meta.leads, tasks: KCApp.S.meta.tasks, articles: [] }, namespace: 'test' }))));

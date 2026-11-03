@@ -745,6 +745,11 @@ input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display
   function taskSetOwner(t, type, key, now) {
     var o = Object.assign({}, t); o.ownerType = type === 'project' || type === 'lead' ? type : ''; o.ownerKey = o.ownerType ? String(key || '') : ''; o.updatedAt = now; return o;
   }
+  // перенос на доске в другую зону: пишется в историю задачи
+  function taskMoveZone(t, zone, now) {
+    var z = taskZone(zone), o = Object.assign({}, t); if (z.id === taskZone(t.zone).id) return o;
+    taskPush(o, 'Зона: ' + taskZone(t.zone).name + ' → ' + z.name, now); o.zone = z.id; o.updatedAt = now; return o;
+  }
   // фактическая дата закрытия ставится сама
   function taskDone(t, now) { var o = Object.assign({}, t); o.status = 'done'; o.doneAt = now; o.updatedAt = now; taskPush(o, 'Выполнена', now); return o; }
   function taskReopen(t, now) { var o = Object.assign({}, t); o.status = 'open'; o.doneAt = ''; o.updatedAt = now; taskPush(o, 'Возвращена в работу', now); return o; }
@@ -1230,7 +1235,7 @@ input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display
     balances: balances, matchQuery: matchQuery, filterRecords: filterRecords, groupByDay: groupByDay,
     suggestCounterparties: suggestCounterparties, suggestArticles: suggestArticles, suggestProjects: suggestProjects, suggestArticleFor: suggestArticleFor,
     projectStats: projectStats, projectOps: projectOps, projectFinance: projectFinance, fixedAllocation: fixedAllocation, projectResult: projectResult, expenseArticles: expenseArticles, suggestFixedArticles: suggestFixedArticles, periodIncomes: periodIncomes, expenseSumsByArticle: expenseSumsByArticle,
-    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, TASKS: TASKS, taskZone: taskZone, nowLocal: nowLocal, newTask: newTask, taskSet: taskSet, taskSetOwner: taskSetOwner, taskDone: taskDone, taskReopen: taskReopen, taskAlarm: taskAlarm, taskLate: taskLate, mergeTasks: mergeTasks, tasksToList: tasksToList, tasksFromList: tasksFromList, taskOwnerName: taskOwnerName, tasksFor: tasksFor, tasksBoard: tasksBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
+    ACTIVITIES: ACTIVITIES, defaultActivity: defaultActivity, activityName: activityName, newArticle: newArticle, findArticle: findArticle, validateArticleDraft: validateArticleDraft, ensureCatalog: ensureCatalog, fixedArticleNames: fixedArticleNames, articleUsage: articleUsage, suggestCatalog: suggestCatalog, renameArticlePatches: renameArticlePatches, sampleCatalog: sampleCatalog, mergeDecisions: mergeDecisions, mergeLog: mergeLog, mergeStatements: mergeStatements, mergeKeys: mergeKeys, hashStr: hashStr, mergeArticles: mergeArticles, mergeProjects: mergeProjects, projectsToList: projectsToList, projectsFromList: projectsFromList, LEADS: LEADS, leadFieldLabel: leadFieldLabel, leadStage: leadStage, leadField: leadField, newLead: newLead, leadMissing: leadMissing, leadSetField: leadSetField, leadMove: leadMove, leadToLater: leadToLater, leadToLost: leadToLost, leadBack: leadBack, leadConvert: leadConvert, mergeLeads: mergeLeads, leadsToList: leadsToList, leadsFromList: leadsFromList, leadsBoard: leadsBoard, TASKS: TASKS, taskZone: taskZone, nowLocal: nowLocal, newTask: newTask, taskSet: taskSet, taskSetOwner: taskSetOwner, taskMoveZone: taskMoveZone, taskDone: taskDone, taskReopen: taskReopen, taskAlarm: taskAlarm, taskLate: taskLate, mergeTasks: mergeTasks, tasksToList: tasksToList, tasksFromList: tasksFromList, taskOwnerName: taskOwnerName, tasksFor: tasksFor, tasksBoard: tasksBoard, addWorkDays: addWorkDays, crmDueAuto: crmDueAuto, crmNewCard: crmNewCard, findProjectName: findProjectName, suggestProjectNames: suggestProjectNames, CRM: CRM, crmStageInfo: crmStageInfo, crmFieldLabel: crmFieldLabel, crmStage: crmStage, crmField: crmField, crmMissing: crmMissing, crmSetField: crmSetField, crmMove: crmMove, crmTiming: crmTiming, crmBoard: crmBoard, workDaysBetween: workDaysBetween, reconcile: reconcile, resolveDecision: resolveDecision, stampKeys: stampKeys,
     detectColumns: detectColumns, findHeaderRow: findHeaderRow, rowsFromTable: rowsFromTable, importSummary: importSummary,
     backupObject: backupObject, validateBackup: validateBackup, recordsToTable: recordsToTable, sampleRecords: sampleRecords, sampleStatement: sampleStatement
   };
@@ -1317,7 +1322,7 @@ input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display
     mode: 'test', theme: 'dark', view: 'ops', month: KC.monthKey(KC.today()),
     type: 'all', query: '', project: '', unfilled: false, walletsOpen: true, projQuery: '',
     records: [], log: [], decisions: [], pcard: null, meta: { ignoredKeys: [], dirty: {}, lastBackupAt: '', statements: [], projects: {}, leads: {}, tasks: {}, articles: [], deletedArticles: [], synced: {}, stmUrl: '', stmUrlAt: '', stmFiles: {}, stmCheckedAt: '' },
-    admin: false, projMode: 'board', doneAll: false, leadMode: 'funnel', leadQuery: '', lcard: null, tcard: null, taskZone: 'all', taskStatus: 'open', taskQuery: '', artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
+    admin: false, projMode: 'board', doneAll: false, leadMode: 'funnel', leadQuery: '', lcard: null, tcard: null, taskZone: 'all', taskMode: 'board', taskQuery: '', artListOpen: false, logOpen: false, anOpen: false, anPeriod: { mode: 'year', from: '', to: '' }, form: null, modal: null, settingsTab: 'articles', artSheet: null, online: navigator.onLine !== false, sync: { state: 'local', text: '' }
   };
   function pref() { return 'kc.' + S.mode + '.'; }
   function load() {
@@ -1942,7 +1947,7 @@ input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display
 
   /* ---------- CRM: канбан проектов ---------- */
   var DESK = !!(window.matchMedia && matchMedia('(hover:hover) and (pointer:fine)').matches); // перетаскивание только мышью; на телефоне стадии меняются кнопками в карточке
-  var cfTimer = null, dragKey = null, dragLead = null;
+  var cfTimer = null, dragKey = null, dragLead = null, dragTask = null;
   function cfFlush() { if (cfTimer) { clearTimeout(cfTimer); cfTimer = null; persist(); } }
   function cfInput(k, el) {
     var key = pkey(); if (!key) return;
@@ -2007,19 +2012,20 @@ input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display
     if (r.ok) { render(); crmMoveToast(key, to, r); }
   }
   function onDragStart(e) {
-    var tl = e.target.closest ? e.target.closest('.kcard[data-lead]') : null, t = tl || (e.target.closest ? e.target.closest('.kcard[data-key]') : null); if (!t) return;
-    if (tl) { dragLead = tl.getAttribute('data-lead'); dragKey = null; } else { dragKey = t.getAttribute('data-key'); dragLead = null; }
-    try { e.dataTransfer.setData('text/plain', dragLead || dragKey); e.dataTransfer.effectAllowed = 'move'; } catch (x) {}
+    var tk = e.target.closest ? e.target.closest('.kcard[data-task]') : null, tl = e.target.closest ? e.target.closest('.kcard[data-lead]') : null, t = tk || tl || (e.target.closest ? e.target.closest('.kcard[data-key]') : null); if (!t) return;
+    dragTask = null; dragLead = null; dragKey = null;
+    if (tk) dragTask = tk.getAttribute('data-task'); else if (tl) dragLead = tl.getAttribute('data-lead'); else dragKey = t.getAttribute('data-key');
+    try { e.dataTransfer.setData('text/plain', dragTask || dragLead || dragKey); e.dataTransfer.effectAllowed = 'move'; } catch (x) {}
     t.classList.add('drag');
   }
-  function onDragEnd() { dragKey = null; dragLead = null; document.querySelectorAll('.kcard.drag,.kst.over').forEach(function (n) { n.classList.remove('drag'); n.classList.remove('over'); }); }
-  function dropZone(e) { var z = e.target.closest ? e.target.closest('.kst') : null; if (!z) return null; if (dragLead ? !z.hasAttribute('data-lstage') : !z.hasAttribute('data-stage')) return null; return z; }
-  function onDragOver(e) { if (!dragKey && !dragLead) return; var z = dropZone(e); if (!z) return; e.preventDefault(); z.classList.add('over'); }
+  function onDragEnd() { dragKey = null; dragLead = null; dragTask = null; document.querySelectorAll('.kcard.drag,.kst.over').forEach(function (n) { n.classList.remove('drag'); n.classList.remove('over'); }); }
+  function dropZone(e) { var z = e.target.closest ? e.target.closest('.kst') : null; if (!z) return null; if (dragTask ? !z.hasAttribute('data-tzone') : dragLead ? !z.hasAttribute('data-lstage') : !z.hasAttribute('data-stage')) return null; return z; }
+  function onDragOver(e) { if (!dragKey && !dragLead && !dragTask) return; var z = dropZone(e); if (!z) return; e.preventDefault(); z.classList.add('over'); }
   function onDragLeave(e) { var z = e.target.closest ? e.target.closest('.kst') : null; if (z && !z.contains(e.relatedTarget)) z.classList.remove('over'); }
   function onDrop(e) {
-    if (!dragKey && !dragLead) return; var z = dropZone(e); if (!z) return;
-    e.preventDefault(); var key = dragKey, lead = dragLead; onDragEnd();
-    if (lead) ldDrop(lead, +z.getAttribute('data-lstage')); else crmDrop(key, +z.getAttribute('data-stage'));
+    if (!dragKey && !dragLead && !dragTask) return; var z = dropZone(e); if (!z) return;
+    e.preventDefault(); var key = dragKey, lead = dragLead, task = dragTask; onDragEnd();
+    if (task) tkDrop(task, z.getAttribute('data-tzone')); else if (lead) ldDrop(lead, +z.getAttribute('data-lstage')); else crmDrop(key, +z.getAttribute('data-stage'));
   }
   function crmTile(c) {
     if (c.closed) {
@@ -2647,15 +2653,33 @@ input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display
     return '<div class="glass" id="tkblock" style="padding:12px 14px;display:flex;flex-direction:column;gap:8px"><div class="row between wrap gap8"><div class="bold">Задачи · ' + r.open.length + ' открытых' + (r.alarms ? ' ' + tkAlarmIcon({ alarm: true, remind: '' }) : '') + '</div><button type="button" class="btn" data-act="tk-new" data-ot="' + esc(type) + '" data-ok="' + esc(key) + '">+ Задача</button></div>' +
       (r.list.length ? '<div class="list">' + r.list.map(function (c) { return tkRow(c, false); }).join('') + '</div>' : '<div class="small mu">Задач нет</div>') + '</div>';
   }
+  function tkTile(c) {
+    var who = c.owner ? '<span class="tiny mu">' + esc(c.owner) + '</span>' : '';
+    var due = c.due ? '<span class="tiny ' + (c.late ? 'neg bold' : 'mu') + '">Срок ' + esc(ruDate(c.due)) + (c.late ? ' (просрочена)' : '') + '</span>' : '';
+    return '<button type="button" class="kcard glass tktile" data-act="tk-open" data-id="' + esc(c.id) + '" data-task="' + esc(c.id) + '"' + (DESK ? ' draggable="true"' : '') + '><span class="row between gap8" style="align-items:flex-start"><span class="kt">' + esc(c.title) + '</span>' + tkAlarmIcon(c) + '</span>' + who + due + '</button>';
+  }
+  function tkDrop(id, zone) {
+    var t = S.meta.tasks[id]; if (!t || t.status === 'done' || KC.taskZone(zone).id === KC.taskZone(t.zone).id) return;
+    S.meta.tasks[id] = KC.taskMoveZone(t, zone, KC.nowISO());
+    addLog('task', 'Задача «' + t.title + '»: зона «' + KC.taskZone(t.zone).name + '» → «' + KC.taskZone(zone).name + '»', ''); persist(); render(); toast('Зона: ' + KC.taskZone(zone).name);
+  }
   function viewTasks() {
-    var b = KC.tasksBoard(S.meta.tasks, Object.assign(tkNowOpts(), { zone: S.taskZone, status: S.taskStatus, query: S.taskQuery })), Z = KC.TASKS.ZONES;
+    var m = S.taskMode, Z = KC.TASKS.ZONES;
+    var b = KC.tasksBoard(S.meta.tasks, Object.assign(tkNowOpts(), { zone: m === 'board' ? 'all' : S.taskZone, status: m === 'done' ? 'done' : 'open', query: S.taskQuery }));
     var out = '<div class="row between"><div class="h2" style="margin:0">Задачи</div><button type="button" class="iconbtn glass" data-act="theme" aria-label="Сменить тему">' + svg(S.theme === 'dark' ? 'sun' : 'moon') + '</button></div>';
     out += '<div class="searchbox">' + svg('search', 18) + '<input id="tq" class="input" type="search" enterkeyhint="search" placeholder="Поиск по задаче, описанию, карточке" value="' + esc(S.taskQuery) + '" autocomplete="off"></div>';
-    out += '<div class="wsel" role="group" aria-label="Зона">' + [['all', 'Все']].concat(Z.map(function (z) { return [z.id, z.name]; })).map(function (x) { return '<button type="button" class="chip ' + (S.taskZone === x[0] ? 'on' : '') + '" data-act="tk-zone" data-v="' + x[0] + '">' + esc(x[1]) + ' · ' + b.zoneCounts[x[0]] + '</button>'; }).join('') + '</div>';
-    out += '<div class="wsel" role="group" aria-label="Статус">' + [['open', 'Открытые', b.openCount], ['done', 'Выполненные', b.doneCount]].map(function (x) { return '<button type="button" class="chip ' + (S.taskStatus === x[0] ? 'on' : '') + '" data-act="tk-status" data-v="' + x[0] + '">' + x[1] + ' · ' + x[2] + '</button>'; }).join('') + '</div>';
+    out += '<div class="wsel" role="group" aria-label="Вид задач">' + [['board', 'Доска', b.openCount], ['list', 'Список', b.openCount], ['done', 'Выполненные', b.doneCount]].map(function (x) { return '<button type="button" class="chip ' + (m === x[0] ? 'on' : '') + '" data-act="tk-mode" data-v="' + x[0] + '">' + x[1] + ' · ' + x[2] + '</button>'; }).join('') + '</div>';
+    if (m !== 'board') out += '<div class="wsel" role="group" aria-label="Зона">' + [['all', 'Все']].concat(Z.map(function (z) { return [z.id, z.name]; })).map(function (x) { return '<button type="button" class="chip ' + (S.taskZone === x[0] ? 'on' : '') + '" data-act="tk-zone" data-v="' + x[0] + '">' + esc(x[1]) + (m === 'done' ? '' : ' · ' + b.zoneCounts[x[0]]) + '</button>'; }).join('') + '</div>';
     out += '<button type="button" class="btn main" data-act="tk-new" data-ot="" data-ok="">+ Новая задача</button>';
-    var body = b.items.length ? '<div class="list">' + b.items.map(function (c) { return tkRow(c, true); }).join('') + '</div>' : '<div class="glass mu" style="padding:18px;text-align:center">' + (S.taskStatus === 'done' ? 'Выполненных задач нет' : 'Открытых задач нет') + '</div>';
-    body += '<div class="tiny mu">Задача без зоны попадает в «Не распределены». Значок будильника появляется, когда наступило время напоминания, а задача не выполнена.</div>';
+    var body;
+    if (m === 'board') {
+      body = '<div class="kb" id="kb">' + Z.map(function (z) {
+        var cards = b.items.filter(function (c) { return c.zone === z.id; });
+        return '<section class="kcol" aria-label="' + esc(z.name) + '"><div class="kch"><b>' + esc(z.name) + '</b><span class="pill">' + cards.length + '</span></div><div class="kst" data-tzone="' + z.id + '">' + (cards.length ? cards.map(tkTile).join('') : '<div class="kempty">пусто' + (DESK ? ', перетащите сюда' : '') + '</div>') + '</div></section>';
+      }).join('') + '</div><div class="tiny mu">' + (DESK ? 'Задачу можно перетащить в другую зону. ' : 'Зона меняется в самой задаче. ') + 'Выполненные задачи уходят с доски: они во вкладке «Выполненные» и в карточке проекта или лида с пометой «выполнена». Значок будильника появляется, когда наступило время напоминания, а задача не выполнена.</div>';
+    } else {
+      body = b.items.length ? '<div class="list">' + b.items.map(function (c) { return tkRow(c, true); }).join('') + '</div>' : '<div class="glass mu" style="padding:18px;text-align:center">' + (m === 'done' ? 'Выполненных задач нет' : 'Открытых задач нет') + '</div>';
+    }
     return out + '<div id="tasklist">' + body + '</div>';
   }
   function tkOwnerSelect(cur) {
@@ -2715,7 +2739,7 @@ input[type=datetime-local].input{-webkit-appearance:none;appearance:none;display
   function tkAction(a, t) {
     var c = S.tcard, now = KC.nowISO();
     if (a === 'tk-zone') { S.taskZone = t.getAttribute('data-v'); return render(); }
-    if (a === 'tk-status') { S.taskStatus = t.getAttribute('data-v'); return render(); }
+    if (a === 'tk-mode') { S.taskMode = t.getAttribute('data-v'); return render(); }
     if (a === 'tk-new') { S.tcard = { id: null, isNew: true, draft: KC.newTask('', { ownerType: t.getAttribute('data-ot'), ownerKey: t.getAttribute('data-ok') }, now) }; return renderTCard(); }
     if (a === 'tk-open') { S.tcard = { id: t.getAttribute('data-id') }; return renderTCard(); }
     if (a === 'tk-close') { tkFlush(); S.tcard = null; renderTCard(); if (S.pcard) renderPCard(); if (S.lcard) renderLCard(); if (S.view === 'tasks') render(); return; }

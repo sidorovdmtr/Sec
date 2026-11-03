@@ -673,6 +673,9 @@ eq('Date midday unchanged', KC.parseDateInput(new Date(2026, 9, 30, 15, 0, 0)), 
   eq('task: unknown owner type means no card', KC.newTask('x', { ownerType: 'client', ownerKey: 'k' }, N1).ownerType, '');
   eq('task: zone can be set', KC.taskSet(a, 'zone', 'shop', N2).zone, 'shop');
   eq('task: bad zone on set falls back', KC.taskSet(a, 'zone', 'zzz', N2).zone, 'none');
+  { const m1 = KC.taskMoveZone(a, 'shop', N2), m2 = KC.taskMoveZone(m1, 'shop', N2);
+    eq('task: move zone writes history', [m1.zone, m1.hist[0].t, m1.updatedAt], ['shop', 'Зона: Не распределены → Цех', N2]);
+    eq('task: move to the same zone changes nothing', [m2.hist.length, m2.zone], [m1.hist.length, 'shop']); }
   eq('task: set does not mutate source', [a.zone, a.updatedAt], ['none', N1]);
   const d = KC.taskDone(KC.taskSet(a, 'due', '2026-11-05', N1), N2);
   eq('task: done writes fact date itself', [d.status, d.doneAt, d.due], ['done', N2, '2026-11-05']);
